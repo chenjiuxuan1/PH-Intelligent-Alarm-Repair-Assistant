@@ -523,7 +523,7 @@ class RepairStrict7StepTests(unittest.TestCase):
         self.assertEqual(results[0]["instance_id"], 45678)
         self.assertEqual(running_instances[0]["instance_id"], 45678)
 
-    def test_step3_start_repair_skips_when_workflow_has_running_instance(self):
+    def test_step3_start_repair_skips_when_workflow_conflict_does_not_clear(self):
         module = load_module()
         tasks = [
             {
@@ -536,13 +536,16 @@ class RepairStrict7StepTests(unittest.TestCase):
             }
         ]
 
+        conflict = {"id": 999, "commandType": "SCHEDULER", "state": "RUNNING_EXECUTION"}
         with mock.patch.object(
             module,
             "find_conflicting_running_instance",
-            return_value={"id": 999, "commandType": "SCHEDULER", "state": "RUNNING_EXECUTION"},
-        ), mock.patch.object(module, "ds_api_post") as mocked_post, mock.patch.object(module, "log"), mock.patch(
-            "time.sleep"
-        ):
+            return_value=conflict,
+        ), mock.patch.object(
+            module,
+            "wait_for_workflow_conflict_clear",
+            return_value=(False, conflict),
+        ), mock.patch.object(module, "ds_api_post") as mocked_post, mock.patch.object(module, "log"):
             results, running_instances = module.step3_start_repair(tasks)
 
         mocked_post.assert_not_called()
@@ -550,6 +553,40 @@ class RepairStrict7StepTests(unittest.TestCase):
         self.assertIn("运行中实例", results[0]["error"])
         self.assertIn("999", results[0]["error"])
         self.assertEqual(running_instances, [])
+
+    def test_step3_start_repair_waits_for_workflow_conflict_then_starts(self):
+        module = load_module()
+        tasks = [
+            {
+                "table": "dwd_fox_mission_log",
+                "dt": "2026-04-29",
+                "workflow_code": "wf-1",
+                "workflow_name": "DWD",
+                "task_code": "task-1",
+                "task_name": "dwd_fox_mission_log",
+            }
+        ]
+
+        conflict = {"id": 999, "commandType": "START_PROCESS", "state": "RUNNING_EXECUTION"}
+        with mock.patch.object(module, "find_conflicting_running_instance", return_value=conflict), \
+            mock.patch.object(module, "wait_for_workflow_conflict_clear", return_value=(True, None)), \
+            mock.patch.object(module, "start_workflow_instance_with_fallbacks") as mocked_start, \
+            mock.patch.object(module, "log"), \
+            mock.patch("time.sleep"):
+            mocked_start.return_value = (
+                True,
+                {"data": 12345},
+                "success",
+                "/projects/p/executors/start-process-instance",
+                {},
+                "2026-04-29 00:00:00",
+            )
+            results, running_instances = module.step3_start_repair(tasks)
+
+        mocked_start.assert_called_once()
+        self.assertEqual(results[0]["status"], "success")
+        self.assertEqual(results[0]["instance_id"], 12345)
+        self.assertEqual(running_instances[0]["instance_id"], 12345)
 
     def test_execute_repairs_in_batches_serializes_same_child_task(self):
         module = load_module()
