@@ -414,7 +414,7 @@ class RepairStrict7StepTests(unittest.TestCase):
         self.assertEqual(captured["data"]["scheduleTime"], "")
         self.assertEqual(
             captured["data"]["startParams"],
-            '{"global": [{"prop": "dt", "value": "2026-04-29"}]}',
+            '{"dt": "2026-04-29"}',
         )
         self.assertEqual(results[0]["instance_id"], 12345)
         self.assertEqual(running_instances[0]["instance_id"], 12345)
@@ -452,7 +452,7 @@ class RepairStrict7StepTests(unittest.TestCase):
         self.assertEqual(results[0]["instance_id"], 67890)
         self.assertEqual(running_instances[0]["instance_id"], 67890)
 
-    def test_step3_start_repair_falls_back_to_property_list_start_params_when_global_wrapper_is_rejected(self):
+    def test_step3_start_repair_falls_back_to_property_list_when_map_is_rejected(self):
         module = load_module()
         tasks = [
             {
@@ -469,7 +469,7 @@ class RepairStrict7StepTests(unittest.TestCase):
         def fake_ds_api_post(endpoint, data):
             attempts.append((endpoint, dict(data)))
             if len(attempts) == 1:
-                return False, {}, 'start workflow instance error:Parse json: {"global": [{"prop": "dt", "value": "2026-05-11"}]} to list of class: org.apache.dolphinscheduler.plugin.task.api.model.Property failed'
+                return False, {}, 'start workflow instance error:Parse json map failed'
             return True, {"data": [13579]}, ""
 
         with mock.patch.object(module, "ds_api_post", side_effect=fake_ds_api_post), \
@@ -481,11 +481,11 @@ class RepairStrict7StepTests(unittest.TestCase):
         self.assertEqual(len(attempts), 2)
         self.assertEqual(
             attempts[0][1]["startParams"],
-            '{"global": [{"prop": "dt", "value": "2026-05-11"}]}',
+            '{"dt": "2026-05-11"}',
         )
         self.assertEqual(
             attempts[1][1]["startParams"],
-            '[{"prop": "dt", "value": "2026-05-11"}]',
+            '[{"prop": "dt", "direct": "IN", "type": "VARCHAR", "value": "2026-05-11"}]',
         )
         self.assertEqual(results[0]["instance_id"], 13579)
         self.assertEqual(running_instances[0]["instance_id"], 13579)
@@ -972,6 +972,42 @@ class RepairStrict7StepTests(unittest.TestCase):
             )
 
         self.assertEqual(result, {})
+
+    def test_find_recent_instance_by_workflow_falls_back_to_latest_non_scheduler_when_time_zone_differs(self):
+        module = load_module()
+        module.DS_API_MODE = "process_v2"
+        module.DS_INSTANCE_ENDPOINT_STYLE = "process-instances"
+
+        success_items = [
+            {
+                "id": 3159308,
+                "state": "SUCCESS",
+                "startTime": "2026-05-11 09:35:01",
+                "processDefinitionCode": 16916802671296,
+                "commandType": "SCHEDULER",
+            },
+            {
+                "id": 3159315,
+                "state": "SUCCESS",
+                "startTime": "2026-05-11 09:35:46",
+                "processDefinitionCode": 16916802671296,
+                "commandType": "START_PROCESS",
+            },
+        ]
+
+        def fake_get_all_instances_from_lists(project_code, state_type='ALL'):
+            if state_type == "SUCCESS":
+                return success_items
+            return []
+
+        with mock.patch.object(module, "get_all_instances_from_lists", side_effect=fake_get_all_instances_from_lists):
+            result = module.find_recent_instance_by_workflow(
+                "default-project",
+                "16916802671296",
+                launched_at="2026-05-10 20:35:44",
+            )
+
+        self.assertEqual(result["id"], 3159315)
 
     def test_find_recent_instance_by_workflow_tolerates_small_clock_skew_before_launch(self):
         module = load_module()

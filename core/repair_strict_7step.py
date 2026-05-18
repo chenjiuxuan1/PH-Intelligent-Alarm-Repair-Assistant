@@ -133,16 +133,28 @@ def _extract_instance_id_from_start_result(result):
 
 def build_start_params_payloads(dt):
     """兼容不同 DS 集群对 startParams 的 JSON 结构要求。"""
+    key_value_map = {'dt': dt}
+    property_list = [{'prop': 'dt', 'direct': 'IN', 'type': 'VARCHAR', 'value': dt}]
+    global_wrapper = {'global': property_list}
+
     return [
-        json.dumps({'global': [{'prop': 'dt', 'value': dt}]}),
-        json.dumps([{'prop': 'dt', 'value': dt}]),
+        json.dumps(key_value_map),
+        json.dumps(property_list),
+        json.dumps(global_wrapper),
     ]
 
 
 def should_retry_with_property_list_start_params(message):
     text = str(message or '')
     lowered = text.lower()
-    return 'parse json' in lowered and 'property failed' in lowered
+    return (
+        'startparams' in lowered
+        or 'start params' in lowered
+        or 'parse json' in lowered
+        or 'property failed' in lowered
+        or 'property list failed' in lowered
+        or 'map failed' in lowered
+    )
 
 
 def normalize_table_identifier(value):
@@ -478,6 +490,7 @@ def find_recent_instance_by_workflow(project_code, workflow_code, launched_at=No
     launched_at_dt = parse_ds_datetime(launched_at)
     prelaunch_skew_seconds = 15
     candidates = []
+    non_scheduler_fallback_candidates = []
 
     for state_type in state_types:
         for item in get_all_instances_from_lists(project_code, state_type=state_type):
@@ -488,6 +501,10 @@ def find_recent_instance_by_workflow(project_code, workflow_code, launched_at=No
             )
             if str(item_workflow_code) != workflow_code_str:
                 continue
+
+            command_type = str(item.get('commandType') or '').upper()
+            if command_type != 'SCHEDULER':
+                non_scheduler_fallback_candidates.append(item)
 
             start_dt = parse_ds_datetime(item.get('startTime'))
             if launched_at_dt and start_dt:
@@ -502,6 +519,21 @@ def find_recent_instance_by_workflow(project_code, workflow_code, launched_at=No
             candidates.append(item)
 
     if not candidates:
+        if non_scheduler_fallback_candidates:
+            non_scheduler_fallback_candidates.sort(
+                key=lambda item: (
+                    parse_ds_datetime(item.get('startTime')).timestamp()
+                    if parse_ds_datetime(item.get('startTime'))
+                    else float('-inf')
+                ),
+                reverse=True,
+            )
+            selected = non_scheduler_fallback_candidates[0]
+            debug_log(
+                f"工作流 {workflow_code} 未按启动时间匹配到实例，回退选中最近非调度实例 "
+                f"id={selected.get('id')} state={selected.get('state')} startTime={selected.get('startTime')}"
+            )
+            return selected
         debug_log(
             f"未找到工作流 {workflow_code} 的近期实例，launched_at={launched_at}, "
             f"state_types={state_types}"
