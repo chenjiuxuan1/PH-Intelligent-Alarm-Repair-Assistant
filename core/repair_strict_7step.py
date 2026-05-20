@@ -1254,6 +1254,18 @@ def step2_search_in_workflow(workflow_code, table_name, visited=None):
             candidates.append(build_candidate(task, task_name))
     
     if child_candidates:
+        runnable_child_candidates = [
+            candidate for candidate in child_candidates
+            if str(candidate.get('task_flag', 'YES')).upper() != 'NO'
+        ]
+        if runnable_child_candidates:
+            non_datax_runnable_child_candidates = [
+                candidate for candidate in runnable_child_candidates
+                if candidate.get('task_type') != 'DATAX'
+            ]
+            if non_datax_runnable_child_candidates:
+                return non_datax_runnable_child_candidates[0]
+            return runnable_child_candidates[0]
         non_datax_child_candidates = [
             candidate for candidate in child_candidates
             if candidate.get('task_type') != 'DATAX'
@@ -1264,6 +1276,19 @@ def step2_search_in_workflow(workflow_code, table_name, visited=None):
 
     if not candidates:
         return None
+
+    runnable_candidates = [
+        candidate for candidate in candidates
+        if str(candidate.get('task_flag', 'YES')).upper() != 'NO'
+    ]
+    if runnable_candidates:
+        non_datax_runnable_candidates = [
+            candidate for candidate in runnable_candidates
+            if candidate.get('task_type') != 'DATAX'
+        ]
+        if non_datax_runnable_candidates:
+            return non_datax_runnable_candidates[0]
+        return runnable_candidates[0]
 
     non_datax_candidates = [
         candidate for candidate in candidates
@@ -1320,11 +1345,16 @@ def step2_find_locations(alerts):
         location = None
         scheduled_location = None
         blocked_location = None
+        forbidden_location = None
         # 先在优先工作流中搜索
         for wf_code, wf_name in priority_workflows:
             for search_table in search_tables:
                 result = step2_search_in_workflow(wf_code, search_table)
                 if not result:
+                    continue
+                if str(result.get('task_flag', 'YES')).upper() == 'NO':
+                    if forbidden_location is None:
+                        forbidden_location = result
                     continue
                 if is_blocked_workflow_match(result):
                     if blocked_location is None:
@@ -1368,6 +1398,10 @@ def step2_find_locations(alerts):
                     for search_table in search_tables:
                         result = step2_search_in_workflow(wf_code, search_table)
                         if not result:
+                            continue
+                        if str(result.get('task_flag', 'YES')).upper() == 'NO':
+                            if forbidden_location is None:
+                                forbidden_location = result
                             continue
                         if is_blocked_workflow_match(result):
                             if blocked_location is None:
@@ -1437,6 +1471,24 @@ def step2_find_locations(alerts):
                 'task_code': '',
                 'task_name': blocked_location.get('task_name', ''),
                 'task_flag': blocked_location.get('task_flag', ''),
+                'error': error_msg,
+            }
+            log(f"  ⏭️ {error_msg}")
+        elif forbidden_location:
+            error_msg = build_forbidden_task_manual_review_reason(forbidden_location)
+            task = {
+                'alert_id': alert['id'],
+                'table': table,
+                'src_tbl': alert.get('src_tbl', ''),
+                'dest_tbl': alert.get('dest_tbl', ''),
+                'search_tables': search_tables,
+                'dt': alert['dt'],
+                'diff': alert.get('diff'),
+                'workflow_code': '',
+                'workflow_name': forbidden_location['workflow_name'],
+                'task_code': '',
+                'task_name': forbidden_location.get('task_name', ''),
+                'task_flag': forbidden_location.get('task_flag', ''),
                 'error': error_msg,
             }
             log(f"  ⏭️ {error_msg}")

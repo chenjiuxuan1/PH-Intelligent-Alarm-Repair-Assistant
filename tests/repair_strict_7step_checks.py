@@ -1481,6 +1481,38 @@ class RepairStrict7StepTests(unittest.TestCase):
         self.assertEqual(result["task_code"], "task-shell")
         self.assertEqual(result["task_type"], "SHELL")
 
+    def test_step2_search_in_workflow_prefers_runnable_candidate_over_forbidden_one(self):
+        module = load_module()
+
+        def fake_ds_api_get(endpoint):
+            if endpoint == "/projects/default-project/workflow-definition/wf-1":
+                return False, {}, "not json"
+            if endpoint == "/projects/default-project/process-definition/wf-1":
+                return True, {
+                    "processDefinition": {"name": "DWS"},
+                    "taskDefinitionList": [
+                        {
+                            "code": "task-forbidden",
+                            "name": "dws_user_performance_first_loan_info",
+                            "flag": "NO",
+                            "taskType": "SHELL",
+                        },
+                        {
+                            "code": "task-runnable",
+                            "name": "dws_user_performance_first_loan_info",
+                            "flag": "YES",
+                            "taskType": "SHELL",
+                        },
+                    ],
+                }, ""
+            raise AssertionError(endpoint)
+
+        with mock.patch.object(module, "ds_api_get", side_effect=fake_ds_api_get):
+            result = module.step2_search_in_workflow("wf-1", "dws_user_performance_first_loan_info")
+
+        self.assertEqual(result["task_code"], "task-runnable")
+        self.assertEqual(result["task_flag"], "YES")
+
     def test_apply_repair_strategy_escalates_forbidden_task_to_manual_review(self):
         module = load_module()
         tasks = [
@@ -2531,6 +2563,57 @@ class RepairStrict7StepTests(unittest.TestCase):
         self.assertEqual(searched_codes, ["wf-blocked", "wf-good"])
         self.assertEqual(tasks[0]["workflow_code"], "wf-good")
         self.assertEqual(tasks[0]["workflow_name"], "印尼-数仓工作流（1H）")
+
+    def test_step2_find_locations_skips_forbidden_match_and_uses_later_runnable_workflow(self):
+        module = load_module()
+        module.PRIORITY_WORKFLOWS = []
+        alerts = [{"id": 1, "table": "dws_user_performance_first_loan_info", "dt": "2026-05-19", "diff": 0}]
+        searched_codes = []
+
+        def fake_search(workflow_code, table_name):
+            searched_codes.append(workflow_code)
+            if workflow_code == "wf-forbidden":
+                return {
+                    "workflow_code": "wf-forbidden",
+                    "workflow_name": "DWS（禁跑节点）",
+                    "task_code": "task-no",
+                    "task_name": "dws_user_performance_first_loan_info",
+                    "task_flag": "NO",
+                }
+            if workflow_code == "wf-runnable":
+                return {
+                    "workflow_code": "wf-runnable",
+                    "workflow_name": "DWS（可执行节点）",
+                    "task_code": "task-yes",
+                    "task_name": "dws_user_performance_first_loan_info",
+                    "task_flag": "YES",
+                }
+            return None
+
+        with mock.patch.object(module, "step2_search_in_workflow", side_effect=fake_search), \
+            mock.patch.object(
+                module,
+                "get_workflow_definition_list",
+                return_value=(
+                    True,
+                    {
+                        "totalList": [
+                            {"workflowDefinitionCode": "wf-forbidden"},
+                            {"workflowDefinitionCode": "wf-runnable"},
+                        ]
+                    },
+                    "",
+                ),
+            ), \
+            mock.patch.object(module, "get_schedule_map", return_value={}), \
+            mock.patch.object(module, "is_workflow_scheduled", return_value=False), \
+            mock.patch.object(module, "log"):
+            tasks = module.step2_find_locations(alerts)
+
+        self.assertEqual(searched_codes, ["wf-forbidden", "wf-runnable"])
+        self.assertEqual(tasks[0]["workflow_code"], "wf-runnable")
+        self.assertEqual(tasks[0]["task_code"], "task-yes")
+        self.assertEqual(tasks[0]["task_flag"], "YES")
 
     def test_get_workflow_definition_list_falls_back_when_first_endpoint_returns_empty_success(self):
         module = load_module()
