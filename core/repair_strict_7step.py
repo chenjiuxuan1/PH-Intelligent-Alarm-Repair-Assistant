@@ -56,6 +56,7 @@ BLOCKED_FUYAN_WORKFLOW_NAMES = {
 DS_STATUS_DEBUG = os.environ.get('REPAIR_DEBUG_DS_STATUS', '').strip().lower() in {'1', 'true', 'yes', 'on'}
 REPAIR_WORKFLOW_CONFLICT_POLL_INTERVAL_SECONDS = int(os.environ.get('REPAIR_WORKFLOW_CONFLICT_POLL_INTERVAL_SECONDS', '30'))
 REPAIR_WORKFLOW_CONFLICT_WAIT_SECONDS = int(os.environ.get('REPAIR_WORKFLOW_CONFLICT_WAIT_SECONDS', '1800'))
+FAILED_STATE_CONFIRMATION_GRACE_SECONDS = int(os.environ.get('FAILED_STATE_CONFIRMATION_GRACE_SECONDS', '45'))
 
 # 维护任务关键词（排除）
 MAINTENANCE_KEYWORDS = ['补充', '删除', '清理', '修复', '历史', '冗余', '临时', 'test', 'copy', '手插入']
@@ -612,6 +613,32 @@ def maybe_replace_with_recent_real_instance(project_code, item, current_instance
         f"recent_state={recent_instance.get('state')}"
     )
     return recent_instance
+
+
+def should_delay_failed_state_confirmation(item, state):
+    """短暂延迟 STOP/FAILED 的最终判定，给 DS 3.3 集群一个再次识别真实实例的窗口。"""
+    normalized_state = str(state or '').upper()
+    if normalized_state not in {'FAILED', 'FAILURE', 'KILL', 'STOP', 'READY_STOP'}:
+        return False
+
+    workflow_code = item.get('workflow_code') or (item.get('task') or {}).get('workflow_code')
+    if not workflow_code:
+        return False
+
+    first_seen_at = item.get('first_seen_at')
+    if not first_seen_at:
+        return False
+
+    instance_age = time.time() - first_seen_at
+    if instance_age >= FAILED_STATE_CONFIRMATION_GRACE_SECONDS:
+        return False
+
+    rechecks = int(item.get('failed_state_rechecks', 0))
+    if rechecks >= 2:
+        return False
+
+    item['failed_state_rechecks'] = rechecks + 1
+    return True
 
 
 def collect_instance_query_diagnostics(project_code, instance_id, workflow_code=None, launched_at=None):
@@ -1747,6 +1774,7 @@ def step4_wait_and_check(running_instances, poll_interval=10, max_wait=60):
     for item in pending:
         item['fail_count'] = 0
         item['first_seen_at'] = time.time()
+        item['failed_state_rechecks'] = 0
     
     check_count = 0
     
@@ -1825,6 +1853,10 @@ def step4_wait_and_check(running_instances, poll_interval=10, max_wait=60):
                     completed_tasks.append(item['task'])
                     status_changed = True
                 elif state in ['FAILED', 'KILL', 'STOP']:
+                    if should_delay_failed_state_confirmation(item, state):
+                        log(f"  ⚠️  {table}: 检测到 {state}，继续等待并重查真实实例")
+                        still_pending.append(item)
+                        continue
                     log(f"  ❌ {table}: 失败 ({state})")
                     item['task']['final_status'] = 'failed'
                     item['task']['error'] = f"状态: {state}"

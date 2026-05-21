@@ -981,6 +981,32 @@ class RepairStrict7StepTests(unittest.TestCase):
         self.assertEqual(completed[0]["final_status"], "success")
         self.assertEqual(failed, [])
 
+    def test_should_delay_failed_state_confirmation_allows_short_recheck_window(self):
+        module = load_module()
+        item = {
+            "workflow_code": "18641948384363",
+            "first_seen_at": 100.0,
+            "failed_state_rechecks": 0,
+            "task": {"workflow_code": "18641948384363"},
+        }
+
+        with mock.patch("time.time", return_value=120.0):
+            self.assertTrue(module.should_delay_failed_state_confirmation(item, "STOP"))
+        self.assertEqual(item["failed_state_rechecks"], 1)
+
+    def test_should_delay_failed_state_confirmation_stops_after_grace_window(self):
+        module = load_module()
+        item = {
+            "workflow_code": "18641948384363",
+            "first_seen_at": 100.0,
+            "failed_state_rechecks": 0,
+            "task": {"workflow_code": "18641948384363"},
+        }
+
+        with mock.patch("time.time", return_value=200.0):
+            self.assertFalse(module.should_delay_failed_state_confirmation(item, "STOP"))
+        self.assertEqual(item["failed_state_rechecks"], 0)
+
     def test_get_instance_from_list_avoids_all_state_for_process_mode(self):
         module = load_module()
         module.DS_API_MODE = "process_v2"
