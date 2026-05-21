@@ -545,13 +545,24 @@ def find_recent_instance_by_workflow(project_code, workflow_code, launched_at=No
     def candidate_sort_key(item):
         start_dt = parse_ds_datetime(item.get('startTime'))
         command_type = str(item.get('commandType') or '').upper()
+        state = str(item.get('state') or '').upper()
         is_non_scheduler = 0 if command_type == 'SCHEDULER' else 1
+        state_priority = {
+            'RUNNING_EXECUTION': 4,
+            'SUCCESS': 4,
+            'FINISHED': 4,
+            'READY_STOP': 2,
+            'FAILURE': 1,
+            'FAILED': 1,
+            'KILL': 1,
+            'STOP': 0,
+        }.get(state, 3)
         if launched_at_dt and start_dt:
             distance = -abs((start_dt - launched_at_dt).total_seconds())
         else:
             distance = float('-inf')
         timestamp = start_dt.timestamp() if start_dt else float('-inf')
-        return (is_non_scheduler, distance, timestamp)
+        return (is_non_scheduler, state_priority, distance, timestamp)
 
     candidates.sort(key=candidate_sort_key, reverse=True)
     debug_log(
@@ -570,9 +581,11 @@ def maybe_replace_with_recent_real_instance(project_code, item, current_instance
 
     current_id = str((current_instance or {}).get('id') or item.get('instance_id') or '')
     start_response_id = str(item.get('start_response_id') or '')
+    current_state = str((current_instance or {}).get('state') or '').upper()
     should_recheck_recent = (
         not item.get('resolved_instance_id')
         or (start_response_id and current_id == start_response_id)
+        or current_state in {'STOP', 'FAILED', 'FAILURE', 'KILL', 'READY_STOP'}
     )
     if not should_recheck_recent:
         return current_instance
