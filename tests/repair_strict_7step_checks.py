@@ -1740,6 +1740,30 @@ class RepairStrict7StepTests(unittest.TestCase):
 
         self.assertEqual(table_name, "dwd_fox_chatbot_dialog")
 
+    def test_build_search_tables_uses_only_dest_table_when_present(self):
+        module = load_module()
+        row = {
+            "src_tbl": "dwd_app_ask_loan_result_all",
+            "dest_tbl": "dws_user_performance_first_loan_info",
+        }
+
+        self.assertEqual(
+            module.build_search_tables(row),
+            ["dws_user_performance_first_loan_info"],
+        )
+
+    def test_build_search_tables_falls_back_to_src_when_dest_missing(self):
+        module = load_module()
+        row = {
+            "src_tbl": "dwd_app_ask_loan_result_all",
+            "dest_tbl": "",
+        }
+
+        self.assertEqual(
+            module.build_search_tables(row),
+            ["dwd_app_ask_loan_result_all"],
+        )
+
     def test_resolve_alert_dt_prefers_begin_date(self):
         module = load_module()
         row = {

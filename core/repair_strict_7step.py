@@ -1036,9 +1036,13 @@ def resolve_repair_table(row):
     return dest_tbl or src_tbl
 
 def build_search_tables(row):
-    """构造查找修复任务时使用的候选表名，优先展示名，再回退另一侧表名。"""
+    """构造查找修复任务时使用的候选表名。
+
+    质量校验里 dest_tbl 是待修复目标表；src_tbl 只是对比表。
+    只有 dest_tbl 缺失时，才用 src_tbl 兜底，避免误启动上游/对比表工作流。
+    """
     search_tables = []
-    for table_name in (resolve_repair_table(row), row.get('src_tbl') or '', row.get('dest_tbl') or ''):
+    for table_name in (resolve_repair_table(row),):
         normalized = str(table_name).strip()
         if normalized and normalized not in search_tables:
             search_tables.append(normalized)
