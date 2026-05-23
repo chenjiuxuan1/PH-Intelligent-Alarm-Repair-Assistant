@@ -70,9 +70,15 @@ def debug_log(msg):
 
 def _get_definition_detail_endpoints(project_code, workflow_code):
     if DS_DEFINITION_ENDPOINT_STYLE == 'workflow-definition':
-        return [f"/projects/{project_code}/workflow-definition/{workflow_code}"]
+        return [
+            f"/projects/{project_code}/workflow-definition/{workflow_code}",
+            f"/projects/{project_code}/process-definition/{workflow_code}",
+        ]
     if DS_DEFINITION_ENDPOINT_STYLE == 'process-definition':
-        return [f"/projects/{project_code}/process-definition/{workflow_code}"]
+        return [
+            f"/projects/{project_code}/process-definition/{workflow_code}",
+            f"/projects/{project_code}/workflow-definition/{workflow_code}",
+        ]
     return [
         f"/projects/{project_code}/workflow-definition/{workflow_code}",
         f"/projects/{project_code}/process-definition/{workflow_code}",
@@ -81,12 +87,30 @@ def _get_definition_detail_endpoints(project_code, workflow_code):
 
 def _get_definition_list_endpoint_templates():
     if DS_DEFINITION_ENDPOINT_STYLE == 'workflow-definition':
-        return ["/projects/{project_code}/workflow-definition?pageNo={page_no}&pageSize=100"]
+        return [
+            "/projects/{project_code}/workflow-definition?pageNo={page_no}&pageSize=100",
+            "/projects/{project_code}/workflow-definition/query-workflow-definition-list",
+            "/projects/{project_code}/workflow-definition/query-process-definition-list",
+            "/projects/{project_code}/process-definition?pageNo={page_no}&pageSize=100",
+            "/projects/{project_code}/process-definition/query-workflow-definition-list",
+            "/projects/{project_code}/process-definition/query-process-definition-list",
+        ]
     if DS_DEFINITION_ENDPOINT_STYLE == 'process-definition':
-        return ["/projects/{project_code}/process-definition?pageNo={page_no}&pageSize=100"]
+        return [
+            "/projects/{project_code}/process-definition?pageNo={page_no}&pageSize=100",
+            "/projects/{project_code}/process-definition/query-workflow-definition-list",
+            "/projects/{project_code}/process-definition/query-process-definition-list",
+            "/projects/{project_code}/workflow-definition?pageNo={page_no}&pageSize=100",
+            "/projects/{project_code}/workflow-definition/query-workflow-definition-list",
+            "/projects/{project_code}/workflow-definition/query-process-definition-list",
+        ]
     return [
         "/projects/{project_code}/workflow-definition?pageNo={page_no}&pageSize=100",
         "/projects/{project_code}/process-definition?pageNo={page_no}&pageSize=100",
+        "/projects/{project_code}/workflow-definition/query-workflow-definition-list",
+        "/projects/{project_code}/workflow-definition/query-process-definition-list",
+        "/projects/{project_code}/process-definition/query-workflow-definition-list",
+        "/projects/{project_code}/process-definition/query-process-definition-list",
     ]
 
 
@@ -300,6 +324,21 @@ def get_workflow_definition_list():
     last_msg = ""
 
     for endpoint_template in endpoint_templates:
+        if "{page_no}" not in endpoint_template:
+            endpoint = endpoint_template.format(project_code=PROJECT_CODE)
+            success, data, msg = ds_api_get(endpoint)
+            if not success:
+                last_msg = msg
+                continue
+
+            if isinstance(data, list) and data:
+                return True, {'totalList': data}, ''
+            if isinstance(data, dict):
+                total_list = data.get('totalList', [])
+                if total_list:
+                    return True, {'totalList': total_list}, ''
+            continue
+
         page_no = 1
         total_pages = 1
         merged_total_list = []
@@ -310,6 +349,10 @@ def get_workflow_definition_list():
             if not success:
                 last_msg = msg
                 merged_total_list = []
+                break
+
+            if isinstance(data, list):
+                merged_total_list.extend(data)
                 break
 
             merged_total_list.extend(data.get('totalList', []))
@@ -825,6 +868,26 @@ def normalize_fuyan_level(workflow):
     return level
 
 
+def normalize_alert_monitor_level(alert):
+    """从质量告警记录中提取 1/2/3 级复验口径。"""
+    for key in ('monitor_level', 'alert_level', 'type', 'alert_type', 'level'):
+        raw_value = alert.get(key)
+        if raw_value in (None, ''):
+            continue
+        value = str(raw_value).strip().lower()
+        if value.startswith('p') and value[1:] in {'1', '2', '3'}:
+            return value[1:]
+        if value in {'1', '2', '3'}:
+            return value
+        if '1' in value:
+            return '1'
+        if '2' in value:
+            return '2'
+        if '3' in value:
+            return '3'
+    return ''
+
+
 def get_fuyan_start_node(workflow):
     start_node = workflow.get('start_node') or workflow.get('startNodeList') or ''
     if start_node:
@@ -857,11 +920,28 @@ def resolve_fuyan_start_node_code(workflow):
 
 
 def select_fuyan_workflows(alerts):
-    """智能选择复验工作流：dwb 仅走1级，其余走1级 + 每日全级别 + 3级"""
+    """智能选择复验工作流：优先按告警级别精确选择，缺失级别时保留历史兜底策略。"""
     selected_levels = set()
     has_dwb_alert = False
+    has_explicit_level = False
+    needs_week_recheck = False
     for alert in alerts or []:
         table = (alert.get('table') or '').lower()
+        is_dws_alert = table.startswith('dws_')
+
+        alert_level = normalize_alert_monitor_level(alert)
+        if alert_level in {'1', '2', '3'}:
+            has_explicit_level = True
+            selected_levels.add(alert_level)
+            if is_dws_alert:
+                selected_levels.add('3')
+                needs_week_recheck = True
+            continue
+
+        if is_dws_alert:
+            needs_week_recheck = True
+            selected_levels.add('3')
+
         if table.startswith('dwb_'):
             has_dwb_alert = True
             selected_levels.add('1')
@@ -879,7 +959,10 @@ def select_fuyan_workflows(alerts):
         workflow_name = get_fuyan_name(workflow)
         include = False
         if workflow_level == 'all':
-            include = (not has_dwb_alert) and workflow_name.startswith('每日复验全级别数据')
+            include = (
+                (not has_explicit_level and not has_dwb_alert)
+                or needs_week_recheck
+            ) and workflow_name.startswith('每日复验全级别数据')
         elif workflow_level in selected_levels:
             include = True
 

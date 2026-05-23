@@ -216,6 +216,26 @@ class RepairStrict7StepTests(unittest.TestCase):
 
         self.assertEqual(started_codes, ["wf-daily", "wf-l1", "wf-l3"])
 
+    def test_step5_execute_fuyan_adds_week_and_level3_for_dws_even_with_explicit_level1(self):
+        module = load_module()
+        module.FUYAN_WORKFLOWS = [
+            {"workflow_name": "每小时复验1级表数据(D-1)", "workflow_code": "wf-l1", "level": "1级表"},
+            {"workflow_name": "两小时复验3级表数据(D-1)", "workflow_code": "wf-l3", "level": "3级表"},
+            {"workflow_name": "每日复验全级别数据(W-1)", "workflow_code": "wf-week", "level": "全级别"},
+        ]
+        started_codes = []
+
+        def fake_ds_api_post(endpoint, data):
+            started_codes.append(data["processDefinitionCode"])
+            return True, {"data": [len(started_codes)]}, ""
+
+        alerts = [{"table": "dws_user_performance_first_loan_info", "monitor_level": "1"}]
+
+        with mock.patch.object(module, "ds_api_post", side_effect=fake_ds_api_post):
+            module.step5_execute_fuyan(alerts, [], alerts)
+
+        self.assertEqual(started_codes, ["wf-l1", "wf-l3", "wf-week"])
+
     def test_step5_execute_fuyan_always_includes_level1_for_non_dwb_tables(self):
         module = load_module()
         module.FUYAN_WORKFLOWS = [
@@ -2804,6 +2824,47 @@ class RepairStrict7StepTests(unittest.TestCase):
         self.assertEqual(results[0]["status"], "success")
         self.assertEqual(results[0]["instance_id"], 98765)
         self.assertEqual(running_instances[0]["instance_id"], 98765)
+
+    def test_get_workflow_definition_list_falls_back_to_query_process_definition_list(self):
+        module = load_module()
+
+        def fake_ds_api_get(endpoint):
+            if endpoint.endswith("/workflow-definition?pageNo=1&pageSize=100"):
+                return False, {}, "non-json response: <!DOCTYPE html>"
+            if endpoint.endswith("/process-definition?pageNo=1&pageSize=100"):
+                return False, {}, "non-json response: <!DOCTYPE html>"
+            if endpoint.endswith("/workflow-definition/query-workflow-definition-list"):
+                return False, {}, "not found"
+            if endpoint.endswith("/workflow-definition/query-process-definition-list"):
+                return False, {}, "not found"
+            if endpoint.endswith("/process-definition/query-workflow-definition-list"):
+                return False, {}, "not found"
+            if endpoint.endswith("/process-definition/query-process-definition-list"):
+                return True, [{"code": "wf-query"}], ""
+            raise AssertionError(endpoint)
+
+        with mock.patch.object(module, "ds_api_get", side_effect=fake_ds_api_get):
+            success, data, msg = module.get_workflow_definition_list()
+
+        self.assertTrue(success)
+        self.assertEqual(data["totalList"], [{"code": "wf-query"}])
+
+    def test_get_workflow_definition_detail_falls_back_to_workflow_definition_when_process_style_is_configured(self):
+        module = load_module()
+        module.DS_DEFINITION_ENDPOINT_STYLE = "process-definition"
+
+        def fake_ds_api_get(endpoint):
+            if endpoint == "/projects/default-project/process-definition/wf-query":
+                return False, {}, "non-json response: <!DOCTYPE html>"
+            if endpoint == "/projects/default-project/workflow-definition/wf-query":
+                return True, {"processDefinition": {"name": "WF Query"}}, ""
+            raise AssertionError(endpoint)
+
+        with mock.patch.object(module, "ds_api_get", side_effect=fake_ds_api_get):
+            success, data, msg = module.get_workflow_definition_detail("wf-query")
+
+        self.assertTrue(success)
+        self.assertEqual(data["processDefinition"]["name"], "WF Query")
 
 
 if __name__ == "__main__":
