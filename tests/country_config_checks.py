@@ -16,6 +16,16 @@ def load_module():
 
 
 class CountryConfigTests(unittest.TestCase):
+    def test_ds_config_defaults_to_ph_ds34_runtime(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            module = load_module()
+
+        self.assertEqual(module.DS_CONFIG["api_mode"], "process_v2")
+        self.assertEqual(module.DS_CONFIG["start_endpoint"], "start-process-instance")
+        self.assertEqual(module.DS_CONFIG["start_code_field"], "processDefinitionCode")
+        self.assertEqual(module.DS_CONFIG["definition_endpoint_style"], "process-definition")
+        self.assertEqual(module.DS_CONFIG["instance_endpoint_style"], "process-instances")
+
     def test_local_env_file_populates_missing_environment_values(self):
         env = {"APP_ENV_FILE": "/tmp/ine-local.env"}
         file_content = "\n".join(

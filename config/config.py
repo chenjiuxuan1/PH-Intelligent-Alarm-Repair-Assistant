@@ -160,11 +160,11 @@ DS_CONFIG = {
     "environment_code": _get_env("DS_ENVIRONMENT_CODE", "154818922491872"),
     "tenant_code": _get_env("DS_TENANT_CODE", "dolphinscheduler"),
     "fuyan_project_name": _get_env("DS_FUYAN_PROJECT_NAME", "国内数仓-质量校验"),
-    "api_mode": _get_env("DS_API_MODE", "auto"),
-    "start_endpoint": _get_env("DS_START_ENDPOINT", "auto"),
-    "start_code_field": _get_env("DS_START_CODE_FIELD", "auto"),
-    "definition_endpoint_style": _get_env("DS_DEFINITION_ENDPOINT_STYLE", "auto"),
-    "instance_endpoint_style": _get_env("DS_INSTANCE_ENDPOINT_STYLE", "auto"),
+    "api_mode": _get_env("DS_API_MODE", "process_v2"),
+    "start_endpoint": _get_env("DS_START_ENDPOINT", "start-process-instance"),
+    "start_code_field": _get_env("DS_START_CODE_FIELD", "processDefinitionCode"),
+    "definition_endpoint_style": _get_env("DS_DEFINITION_ENDPOINT_STYLE", "process-definition"),
+    "instance_endpoint_style": _get_env("DS_INSTANCE_ENDPOINT_STYLE", "process-instances"),
 }
 
 
