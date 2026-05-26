@@ -163,8 +163,8 @@ DS_CONFIG = {
     "api_mode": _get_env("DS_API_MODE", "process_v2"),
     "start_endpoint": _get_env("DS_START_ENDPOINT", "start-process-instance"),
     "start_code_field": _get_env("DS_START_CODE_FIELD", "processDefinitionCode"),
-    "definition_endpoint_style": _get_env("DS_DEFINITION_ENDPOINT_STYLE", "process-definition"),
-    "instance_endpoint_style": _get_env("DS_INSTANCE_ENDPOINT_STYLE", "process-instances"),
+    "definition_endpoint_style": _get_env("DS_DEFINITION_ENDPOINT_STYLE", "auto"),
+    "instance_endpoint_style": _get_env("DS_INSTANCE_ENDPOINT_STYLE", "auto"),
 }
 
 
