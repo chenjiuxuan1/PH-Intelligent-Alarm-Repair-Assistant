@@ -134,20 +134,37 @@ def _get_instance_list_styles():
 
 
 def _get_start_attempts():
+    preferred_endpoint = None
+    preferred_code_field = None
     if DS_START_ENDPOINT != 'auto' or DS_START_CODE_FIELD != 'auto':
-        endpoint = DS_START_ENDPOINT if DS_START_ENDPOINT != 'auto' else 'start-process-instance'
-        code_field = DS_START_CODE_FIELD if DS_START_CODE_FIELD != 'auto' else 'processDefinitionCode'
-        return [(endpoint, code_field)]
+        preferred_endpoint = (
+            DS_START_ENDPOINT if DS_START_ENDPOINT != 'auto' else 'start-process-instance'
+        )
+        preferred_code_field = (
+            DS_START_CODE_FIELD if DS_START_CODE_FIELD != 'auto' else 'processDefinitionCode'
+        )
+    elif DS_API_MODE == 'workflow_v1':
+        preferred_endpoint = 'start-workflow-instance'
+        preferred_code_field = 'workflowDefinitionCode'
+    else:
+        preferred_endpoint = 'start-process-instance'
+        preferred_code_field = 'processDefinitionCode'
 
-    if DS_API_MODE == 'workflow_v1':
-        return [('start-workflow-instance', 'workflowDefinitionCode')]
-    if DS_API_MODE == 'process_v2':
-        return [('start-process-instance', 'processDefinitionCode')]
-
-    return [
+    attempts = [
+        (preferred_endpoint, preferred_code_field),
         ('start-process-instance', 'processDefinitionCode'),
         ('start-workflow-instance', 'workflowDefinitionCode'),
     ]
+
+    deduped_attempts = []
+    seen = set()
+    for endpoint, code_field in attempts:
+        key = (endpoint, code_field)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped_attempts.append(key)
+    return deduped_attempts
 
 
 def _extract_instance_id_from_start_result(result):
@@ -181,6 +198,17 @@ def should_retry_with_property_list_start_params(message):
         or 'property failed' in lowered
         or 'property list failed' in lowered
         or 'map failed' in lowered
+    )
+
+
+def should_retry_with_alternate_start_endpoint(message):
+    text = str(message or '')
+    lowered = text.lower()
+    return (
+        '405' in lowered
+        or 'method not allowed' in lowered
+        or 'unsupported' in lowered
+        or 'not support' in lowered
     )
 
 
@@ -267,6 +295,8 @@ def start_workflow_instance_with_fallbacks(project_code, workflow_code, base_dat
                 )
                 if start_params_payload is not None and index == 0 and should_retry_with_property_list_start_params(msg):
                     continue
+                if should_retry_with_alternate_start_endpoint(msg):
+                    break
             break
 
     return success, result, msg, used_endpoint, used_payload, launched_at
@@ -2060,9 +2090,14 @@ def execute_repairs_in_batches(tasks, max_parallel=4):
 
         batch_results, running_instances = step3_start_repair(batch_tasks)
         completed_tasks, failed_tasks = step4_wait_and_check(running_instances)
+        start_failed_tasks = [
+            task for task in batch_results
+            if task.get('status') == 'failed'
+        ]
 
         all_results.extend(batch_results)
         all_completed_tasks.extend(completed_tasks)
+        all_failed_tasks.extend(start_failed_tasks)
         all_failed_tasks.extend(failed_tasks)
 
     return all_results, all_completed_tasks, all_failed_tasks
@@ -2356,7 +2391,7 @@ def summarize_repair_outcome(alerts, completed_tasks, failed_tasks, manual_revie
                 remaining_task['error'] = build_redundant_data_manual_review_reason()
         else:
             if not remaining_task.get('error'):
-                remaining_task['error'] = '复验完成后告警仍存在，需人工处理'
+                remaining_task['error'] = '当前告警仍未处理，需人工处理'
         remaining_tasks.append(remaining_task)
 
     return {
@@ -2467,10 +2502,10 @@ def generate_tv_report(summary, fuyan_results):
         report_lines.append("")
     
     if summary['remaining_tasks']:
-        report_lines.append("⚠️ 【复验后仍存在，需人工处理】")
+        report_lines.append("⚠️ 【当前仍未处理，需人工处理】")
         for task in summary['remaining_tasks']:
             report_lines.append(f"  • {task['table']}")
-            report_lines.append(f"    原因: {task.get('error', '复验完成后告警仍存在，需人工处理')}")
+            report_lines.append(f"    原因: {task.get('error', '当前告警仍未处理，需人工处理')}")
             if task.get('diff') not in (None, ''):
                 report_lines.append(f"    数据量差异: {task['diff']}")
         report_lines.append("")

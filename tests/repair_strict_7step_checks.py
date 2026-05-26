@@ -473,6 +473,40 @@ class RepairStrict7StepTests(unittest.TestCase):
         self.assertEqual(results[0]["instance_id"], 67890)
         self.assertEqual(running_instances[0]["instance_id"], 67890)
 
+    def test_step3_start_repair_falls_back_to_workflow_style_when_process_style_returns_405(self):
+        module = load_module()
+        module.DS_API_MODE = "process_v2"
+        module.DS_START_ENDPOINT = "start-process-instance"
+        module.DS_START_CODE_FIELD = "processDefinitionCode"
+        tasks = [
+            {
+                "table": "dwb_asset_info",
+                "dt": "2026-05-25",
+                "workflow_code": "wf-1",
+                "workflow_name": "DWB",
+                "task_code": "task-1",
+                "task_name": "dwb_asset_info",
+            }
+        ]
+        attempts = []
+
+        def fake_ds_api_post(endpoint, data):
+            attempts.append((endpoint, dict(data)))
+            if endpoint.endswith("start-process-instance"):
+                return False, {}, "HTTP Error 405: Method Not Allowed"
+            return True, {"data": [24680]}, ""
+
+        with mock.patch.object(module, "ds_api_post", side_effect=fake_ds_api_post), \
+            mock.patch.object(module, "log"), \
+            mock.patch("time.sleep"):
+            results, running_instances = module.step3_start_repair(tasks)
+
+        self.assertEqual(len(attempts), 2)
+        self.assertTrue(attempts[0][0].endswith("start-process-instance"))
+        self.assertTrue(attempts[1][0].endswith("start-workflow-instance"))
+        self.assertEqual(results[0]["instance_id"], 24680)
+        self.assertEqual(running_instances[0]["instance_id"], 24680)
+
     def test_step3_start_repair_falls_back_to_property_list_when_map_is_rejected(self):
         module = load_module()
         tasks = [
@@ -2265,6 +2299,38 @@ class RepairStrict7StepTests(unittest.TestCase):
         self.assertEqual(summary["remaining_tasks"][0]["table"], "dwd_user_individual")
         self.assertEqual(summary["remaining_tasks"][0]["result"], "manual_review")
         self.assertEqual(summary["remaining_tasks"][0]["error"], "自动重跑失败，需人工处理")
+
+    def test_execute_repairs_in_batches_includes_step3_start_failures_in_failed_tasks(self):
+        module = load_module()
+        tasks = [{"table": "dwb_asset_info"}]
+        start_failed = [{"table": "dwb_asset_info", "status": "failed", "error": "HTTP Error 405: Method Not Allowed"}]
+
+        with mock.patch.object(module, "step3_start_repair", return_value=(start_failed, [])), \
+            mock.patch.object(module, "step4_wait_and_check", return_value=([], [])), \
+            mock.patch.object(module, "log"):
+            _, completed_tasks, failed_tasks = module.execute_repairs_in_batches(tasks)
+
+        self.assertEqual(completed_tasks, [])
+        self.assertEqual(len(failed_tasks), 1)
+        self.assertEqual(failed_tasks[0]["table"], "dwb_asset_info")
+        self.assertIn("405", failed_tasks[0]["error"])
+
+    def test_summarize_repair_outcome_keeps_start_failure_reason_for_remaining_task(self):
+        module = load_module()
+        alerts = [{"table": "dwb_asset_info", "dt": "2026-05-25", "diff": 1}]
+        failed_tasks = [{"table": "dwb_asset_info", "status": "failed", "error": "HTTP Error 405: Method Not Allowed"}]
+
+        summary = module.summarize_repair_outcome(
+            alerts=alerts,
+            completed_tasks=[],
+            failed_tasks=failed_tasks,
+            manual_review_tasks=[],
+            remaining_tables={"dwb_asset_info"},
+        )
+
+        self.assertEqual(summary["remaining_count"], 1)
+        self.assertEqual(summary["remaining_tasks"][0]["table"], "dwb_asset_info")
+        self.assertIn("405", summary["remaining_tasks"][0]["error"])
 
     def test_summarize_repair_outcome_counts_manual_review_tasks_in_display_pending_tables(self):
         module = load_module()
