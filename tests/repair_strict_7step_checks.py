@@ -1301,6 +1301,32 @@ class RepairStrict7StepTests(unittest.TestCase):
             ["/projects/default-project/process-instances/12345"],
         )
 
+    def test_get_instance_detail_falls_back_to_workflow_instances_when_process_endpoint_returns_non_json(self):
+        module = load_module()
+        module.DS_INSTANCE_ENDPOINT_STYLE = "process-instances"
+        seen_endpoints = []
+
+        def fake_ds_api_get(endpoint):
+            seen_endpoints.append(endpoint)
+            if endpoint == "/projects/default-project/process-instances/12345":
+                return False, {}, "invalid json response: content-type=text/html"
+            if endpoint == "/projects/default-project/workflow-instances/12345":
+                return True, {"id": 12345, "state": "STOP"}, ""
+            return False, {}, "wrong endpoint"
+
+        with mock.patch.object(module, "ds_api_get", side_effect=fake_ds_api_get):
+            success, data, msg = module.get_instance_detail("default-project", 12345)
+
+        self.assertTrue(success)
+        self.assertEqual(data["state"], "STOP")
+        self.assertEqual(
+            seen_endpoints,
+            [
+                "/projects/default-project/process-instances/12345",
+                "/projects/default-project/workflow-instances/12345",
+            ],
+        )
+
     def test_step2_find_locations_falls_back_to_process_definition_list_for_ds32(self):
         module = load_module()
 

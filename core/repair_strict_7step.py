@@ -21,6 +21,7 @@ import json
 import os
 import re
 import urllib.request
+import urllib.error
 import time
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
@@ -115,21 +116,38 @@ def _get_definition_list_endpoint_templates():
 
 
 def _get_instance_detail_endpoints(project_code, instance_id):
+    endpoints = []
     if DS_INSTANCE_ENDPOINT_STYLE == 'workflow-instances':
-        return [f"/projects/{project_code}/workflow-instances/{instance_id}"]
-    if DS_INSTANCE_ENDPOINT_STYLE == 'process-instances':
-        return [f"/projects/{project_code}/process-instances/{instance_id}"]
-    return [
-        f"/projects/{project_code}/workflow-instances/{instance_id}",
-        f"/projects/{project_code}/process-instances/{instance_id}",
-    ]
+        endpoints = [
+            f"/projects/{project_code}/workflow-instances/{instance_id}",
+            f"/projects/{project_code}/process-instances/{instance_id}",
+        ]
+    elif DS_INSTANCE_ENDPOINT_STYLE == 'process-instances':
+        endpoints = [
+            f"/projects/{project_code}/process-instances/{instance_id}",
+            f"/projects/{project_code}/workflow-instances/{instance_id}",
+        ]
+    else:
+        endpoints = [
+            f"/projects/{project_code}/workflow-instances/{instance_id}",
+            f"/projects/{project_code}/process-instances/{instance_id}",
+        ]
+
+    deduped = []
+    seen = set()
+    for endpoint in endpoints:
+        if endpoint in seen:
+            continue
+        seen.add(endpoint)
+        deduped.append(endpoint)
+    return deduped
 
 
 def _get_instance_list_styles():
     if DS_INSTANCE_ENDPOINT_STYLE == 'workflow-instances':
-        return ['workflow-instances']
+        return ['workflow-instances', 'process-instances']
     if DS_INSTANCE_ENDPOINT_STYLE == 'process-instances':
-        return ['process-instances']
+        return ['process-instances', 'workflow-instances']
     return ['workflow-instances', 'process-instances']
 
 
@@ -1007,6 +1025,20 @@ def log(msg):
     print(f"[{ts}] {msg}", flush=True)
 
 
+def _decode_json_response(response):
+    raw = response.read().decode('utf-8', errors='replace')
+    if not raw.strip():
+        raise ValueError('empty response body')
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        content_type = response.headers.get('Content-Type', '')
+        snippet = raw.strip().replace('\n', ' ')[:200]
+        raise ValueError(
+            f"invalid json response: {exc}; content-type={content_type}; body={snippet}"
+        ) from exc
+
+
 def ds_api_get(endpoint):
     """DS API GET请求"""
     url = f"{DS_BASE}{endpoint}"
@@ -1015,8 +1047,17 @@ def ds_api_get(endpoint):
     req.add_header('Accept', 'application/json, text/plain, */*')
     try:
         with urllib.request.urlopen(req, timeout=15) as response:
-            result = json.loads(response.read().decode('utf-8'))
+            result = _decode_json_response(response)
             return result.get('code') == 0, result.get('data', {}), result.get('msg', '')
+    except urllib.error.HTTPError as e:
+        try:
+            body = e.read().decode('utf-8', errors='replace').strip().replace('\n', ' ')[:200]
+        except Exception:
+            body = ''
+        detail = f"{e}"
+        if body:
+            detail = f"{detail}; body={body}"
+        return False, {}, detail
     except Exception as e:
         return False, {}, str(e)
 
@@ -1034,8 +1075,17 @@ def ds_api_post(endpoint, data):
     req.add_header('Accept', 'application/json, text/plain, */*')
     try:
         with urllib.request.urlopen(req, timeout=30) as response:
-            result = json.loads(response.read().decode('utf-8'))
+            result = _decode_json_response(response)
             return result.get('code') == 0, result, result.get('msg', '')
+    except urllib.error.HTTPError as e:
+        try:
+            body = e.read().decode('utf-8', errors='replace').strip().replace('\n', ' ')[:200]
+        except Exception:
+            body = ''
+        detail = f"{e}"
+        if body:
+            detail = f"{detail}; body={body}"
+        return False, {}, detail
     except Exception as e:
         return False, {}, str(e)
 
