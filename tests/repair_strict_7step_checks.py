@@ -4,10 +4,11 @@ import sys
 import types
 import unittest
 from datetime import datetime, timedelta
+from pathlib import Path
 from unittest import mock
 
 
-MODULE_PATH = "/Users/jiangchuanchen/Desktop/PH-Intelligent-Alarm-Repair-Assistant/core/repair_strict_7step.py"
+MODULE_PATH = Path(__file__).resolve().parents[1] / "core" / "repair_strict_7step.py"
 
 
 def load_module():
@@ -51,7 +52,7 @@ def load_module():
     sys.modules["config"] = fake_config
     sys.modules["config.config"] = fake_config_config
     try:
-        spec = importlib.util.spec_from_file_location("repair_strict_7step", MODULE_PATH)
+        spec = importlib.util.spec_from_file_location("repair_strict_7step", str(MODULE_PATH))
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module

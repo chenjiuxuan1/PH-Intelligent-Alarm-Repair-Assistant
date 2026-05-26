@@ -2,14 +2,15 @@ import importlib.util
 import json
 import os
 import unittest
+from pathlib import Path
 from unittest import mock
 
 
-MODULE_PATH = "/Users/jiangchuanchen/Desktop/PH-Intelligent-Alarm-Repair-Assistant/config/config.py"
+MODULE_PATH = Path(__file__).resolve().parents[1] / "config" / "config.py"
 
 
 def load_module():
-    spec = importlib.util.spec_from_file_location("runtime_config", MODULE_PATH)
+    spec = importlib.util.spec_from_file_location("runtime_config", str(MODULE_PATH))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
