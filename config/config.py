@@ -203,7 +203,7 @@ REPAIR_CONFIG = {
     "blocked_workflow_names": json.loads(
         _get_env(
             "BLOCKED_WORKFLOW_NAMES_JSON",
-            '["印尼-宽表全量工作流（1D）"]',
+            '["印尼-宽表全量工作流（1D）", "DWS（1D）"]',
         )
     ),
     "blocked_fuyan_workflow_names": json.loads(

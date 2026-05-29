@@ -41,7 +41,7 @@ def load_module():
     fake_config_config.REPAIR_CONFIG = {
         "scan_lookback_days": 8,
         "priority_workflow_codes": [],
-        "blocked_workflow_names": ["印尼-宽表全量工作流（1D）"],
+        "blocked_workflow_names": ["印尼-宽表全量工作流（1D）", "DWS（1D）"],
         "blocked_fuyan_workflow_names": [],
     }
     fake_config_config.FUYAN_WORKFLOWS = [
