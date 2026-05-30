@@ -2090,35 +2090,49 @@ def step4_wait_and_check(running_instances, poll_interval=10, max_wait=60):
 
 
 def get_task_execution_key(task):
-    """为同一个子任务生成串行执行键，避免重复并发启动"""
+    """为同一个工作流生成串行执行键，避免并发启动同一工作流下的多个任务。"""
     workflow_code = task.get('workflow_code') or ''
-    task_code = task.get('task_code') or ''
-    return f"{workflow_code}::{task_code}"
+    return str(workflow_code).strip()
 
 
-def split_ready_and_blocked_tasks(tasks, in_flight_keys):
-    """把可立即启动的任务与需排队等待的同子任务任务拆开"""
+def split_ready_and_blocked_tasks(tasks, max_parallel, in_flight_keys=None):
+    """把可立即启动的任务与需排队等待的同工作流任务拆开。"""
     ready_tasks = []
     blocked_tasks = []
-    seen_keys = set(in_flight_keys)
+    seen_keys = set(in_flight_keys or set())
 
     for task in tasks:
-        workflow_code = task.get('workflow_code')
-        task_code = task.get('task_code')
-
-        if not workflow_code or not task_code:
-            ready_tasks.append(task)
+        execution_key = get_task_execution_key(task)
+        if len(ready_tasks) >= max_parallel:
+            blocked_tasks.append(task)
             continue
 
-        execution_key = get_task_execution_key(task)
-        if execution_key in seen_keys:
+        if execution_key and execution_key in seen_keys:
             blocked_tasks.append(task)
             continue
 
         ready_tasks.append(task)
-        seen_keys.add(execution_key)
+        if execution_key:
+            seen_keys.add(execution_key)
 
     return ready_tasks, blocked_tasks
+
+
+def plan_repair_batches(tasks, max_parallel):
+    """按工作流串行约束提前规划批次。"""
+    remaining_tasks = list(tasks)
+    batches = []
+
+    while remaining_tasks:
+        ready_tasks, remaining_tasks = split_ready_and_blocked_tasks(
+            remaining_tasks,
+            max_parallel=max_parallel,
+        )
+        if not ready_tasks:
+            raise ValueError("Unable to schedule repair batches with current workflow constraints")
+        batches.append(ready_tasks)
+
+    return batches
 
 
 def execute_repairs_in_batches(tasks, max_parallel=4):
@@ -2130,10 +2144,10 @@ def execute_repairs_in_batches(tasks, max_parallel=4):
     all_completed_tasks = []
     all_failed_tasks = []
 
-    total_batches = (len(tasks) + max_parallel - 1) // max_parallel
+    batches = plan_repair_batches(tasks, max_parallel=max_parallel)
+    total_batches = len(batches)
 
-    for batch_index, start in enumerate(range(0, len(tasks), max_parallel), 1):
-        batch_tasks = tasks[start:start + max_parallel]
+    for batch_index, batch_tasks in enumerate(batches, 1):
         log("\n" + "=" * 70)
         log(f"【批次 {batch_index}/{total_batches}】执行 {len(batch_tasks)} 个修复任务")
         log("=" * 70)
