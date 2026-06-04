@@ -1,3 +1,4 @@
+import json
 import sys
 import types
 import unittest
@@ -8,6 +9,27 @@ from core import quality_rule_ai_helper as module
 
 
 class QualityRuleAiHelperTests(unittest.TestCase):
+    def test_build_ai_messages_uses_compact_payload(self):
+        messages = module.build_ai_messages(
+            "dwd_sec",
+            {
+                "db": "dwd_sec",
+                "tbl": "dwd_cst_pay_cost_detail",
+                "src_db": "ods",
+                "src_tbl": "ods_repay_cpop_income_item",
+                "columns": ["create_at"],
+                "monitor_level": 3,
+            },
+            [{"path": "/tmp/example.sql", "snippet": "select * from x where create_at > now()"}],
+            "src_check_field/dest_check_field 不一致",
+        )
+        payload = json.loads(messages[1]["content"])
+        self.assertEqual(payload["task"], "generate_count_rule_candidate")
+        self.assertEqual(payload["dest_tbl"], "dwd_cst_pay_cost_detail")
+        self.assertEqual(payload["src_tbl"], "ods_repay_cpop_income_item")
+        self.assertEqual(payload["source_columns"], ["create_at"])
+        self.assertNotIn("table", payload)
+
     def test_deadline_and_timeouts_default_to_disabled(self):
         with mock.patch.dict(module.os.environ, {}, clear=False):
             self.assertIsNone(module._ai_deadline_seconds())
@@ -66,7 +88,11 @@ class QualityRuleAiHelperTests(unittest.TestCase):
             fake_openai_module = types.ModuleType("openai")
             fake_openai_module.OpenAI = mock.Mock(return_value=fake_client)
 
-            with mock.patch.object(module, "maybe_trace_langfuse", return_value=False):
+            def fake_trace(*args, **kwargs):
+                module._LAST_LANGFUSE_TRACE_ERROR = "http_403: forbidden"
+                return False
+
+            with mock.patch.object(module, "maybe_trace_langfuse", side_effect=fake_trace):
                 with mock.patch.dict(sys.modules, {"openai": fake_openai_module}):
                     result, meta = module.generate_rule_candidate_with_ai(
                         "dwd",
@@ -79,6 +105,7 @@ class QualityRuleAiHelperTests(unittest.TestCase):
             self.assertIsNotNone(result)
             self.assertEqual(meta["status"], "ok")
             self.assertEqual(meta["trace_status"], "langfuse_trace_failed")
+            self.assertEqual(meta["trace_reason"], "http_403: forbidden")
         finally:
             module.QUALITY_RULE_AI_CONFIG.clear()
             module.QUALITY_RULE_AI_CONFIG.update(original)
@@ -291,12 +318,11 @@ class QualityRuleAiHelperTests(unittest.TestCase):
             {
                 "tbl": "dwd_x",
                 "dest_tbl": "dwd_x",
-                "updated_at": datetime(2026, 6, 4, 18, 30, 0),
+                "columns": [],
             },
             [{"path": "/tmp/job.sql", "snippet": "select 1", "seen_at": datetime(2026, 6, 4, 18, 31, 0)}],
             "missing fields",
         )
 
         self.assertEqual(messages[0]["role"], "system")
-        self.assertIn('"updated_at": "2026-06-04T18:30:00"', messages[1]["content"])
         self.assertIn('"seen_at": "2026-06-04T18:31:00"', messages[1]["content"])
