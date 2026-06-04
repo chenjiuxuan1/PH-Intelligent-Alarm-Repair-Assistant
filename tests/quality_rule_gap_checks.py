@@ -4,6 +4,8 @@ import sys
 import tempfile
 import types
 import unittest
+from datetime import datetime
+from io import StringIO
 from pathlib import Path
 from unittest import mock
 
@@ -297,6 +299,28 @@ class QualityRuleGapScannerTests(unittest.TestCase):
         self.assertEqual(results[0]["database"], "dwd")
         self.assertEqual(results[0]["status"], "candidate")
         self.assertTrue(fake_conn.closed)
+
+    def test_main_json_output_serializes_datetime_values(self):
+        module = load_module()
+        fake_results = [
+            {
+                "status": "candidate",
+                "database": "dwd",
+                "dest_tbl": "dwd_user_member_log",
+                "rule_name": "cnt",
+                "reason": "ok",
+                "created_at": datetime(2026, 6, 4, 16, 0, 0),
+            }
+        ]
+
+        with mock.patch.object(module, "scan_quality_rule_gaps", return_value=fake_results):
+            stdout = StringIO()
+            with mock.patch("sys.stdout", stdout):
+                exit_code = module.main(["--json"])
+
+        self.assertEqual(exit_code, 0)
+        output = stdout.getvalue()
+        self.assertIn("2026-06-04T16:00:00", output)
 
     def test_apply_candidates_inserts_only_candidate_rules(self):
         fake_cursor = FakeCursor([[], []])

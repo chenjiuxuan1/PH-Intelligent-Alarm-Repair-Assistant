@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import date, datetime
 import os
 import re
 import sys
@@ -778,6 +779,12 @@ def format_results(results):
     return "\n".join(lines)
 
 
+def json_default(value):
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    return str(value)
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Scan wattrel-style quality-rule gaps without modifying wattrel code.")
     parser.add_argument(
@@ -829,7 +836,7 @@ def main(argv=None):
         print(f"已写入 {applied} 条候选规则到 wattrel_quality_setting")
 
     if args.json:
-        print(json.dumps(results, ensure_ascii=False, indent=2))
+        print(json.dumps(results, ensure_ascii=False, indent=2, default=json_default))
     else:
         print(format_results(results))
         if not args.apply:
