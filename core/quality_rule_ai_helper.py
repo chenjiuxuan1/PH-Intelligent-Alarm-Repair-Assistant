@@ -74,7 +74,20 @@ def iter_git_candidate_files(git_roots, table_names):
         yield from fallback_matches
 
 
-def collect_git_context(dest_tbl, src_tbl=None, git_roots=None, limit=3, preferred_paths=None):
+def extract_relevant_git_snippet(text, keywords, window=500, max_chars=1200):
+    lower_text = text.lower()
+    for keyword in keywords:
+        if not keyword:
+            continue
+        idx = lower_text.find(str(keyword).lower())
+        if idx >= 0:
+            start = max(0, idx - window)
+            end = min(len(text), idx + len(str(keyword)) + window)
+            return text[start:end][:max_chars]
+    return text[:max_chars]
+
+
+def collect_git_context(dest_tbl, src_tbl=None, git_roots=None, limit=1, preferred_paths=None):
     table_names = [dest_tbl]
     if src_tbl:
         table_names.append(src_tbl)
@@ -90,6 +103,7 @@ def collect_git_context(dest_tbl, src_tbl=None, git_roots=None, limit=3, preferr
             preferred.append(path_obj)
 
     candidate_iter = preferred if preferred else iter_git_candidate_files(git_roots, table_names)
+    snippet_keywords = [dest_tbl, src_tbl, ' where ', ' join ', ' from ', 'create_at', 'created_at', 'etl_create_time', 'etl_update_time']
     for path in candidate_iter:
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")
@@ -98,7 +112,7 @@ def collect_git_context(dest_tbl, src_tbl=None, git_roots=None, limit=3, preferr
         lower_text = text.lower()
         if dest_tbl.lower() not in lower_text and (not src_tbl or src_tbl.lower() not in lower_text):
             continue
-        snippet = text[:4000]
+        snippet = extract_relevant_git_snippet(text, snippet_keywords)
         snippets.append({"path": str(path), "snippet": snippet})
         if len(snippets) >= limit:
             break

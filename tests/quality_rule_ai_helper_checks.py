@@ -238,11 +238,13 @@ class QualityRuleAiHelperTests(unittest.TestCase):
                 "dwd_cst_pay_cost_detail",
                 src_tbl="ods_repay_cpop_income_item",
                 git_roots=[str(root)],
-                preferred_paths=[str(match_file)],
+                preferred_paths=[str(match_file), str(other_file)],
             )
 
             self.assertEqual(len(snippets), 1)
             self.assertEqual(snippets[0]["path"], str(match_file))
+            self.assertLessEqual(len(snippets[0]["snippet"]), 1200)
+            self.assertIn("create_at", snippets[0]["snippet"])
 
     def test_build_ai_messages_normalizes_datetime_values(self):
         messages = module.build_ai_messages(
