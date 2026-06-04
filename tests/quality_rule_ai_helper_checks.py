@@ -204,6 +204,36 @@ class QualityRuleAiHelperTests(unittest.TestCase):
             module.QUALITY_RULE_AI_CONFIG.clear()
             module.QUALITY_RULE_AI_CONFIG.update(original)
 
+    def test_generate_rule_candidate_with_ai_traces_failed_request(self):
+        original = dict(module.QUALITY_RULE_AI_CONFIG)
+        try:
+            module.QUALITY_RULE_AI_CONFIG.update(
+                {
+                    "enabled": True,
+                    "api_key": "dashscope-key",
+                    "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                    "model": "qwen3.6-plus",
+                    "langfuse_secret_key": "secret",
+                    "langfuse_public_key": "public",
+                    "langfuse_base_url": "https://langfuse.kuainiu.io",
+                }
+            )
+            with mock.patch.object(module, "request_openai_compatible_completion", side_effect=RuntimeError("timeout")):
+                with mock.patch.object(module, "maybe_trace_langfuse", return_value=False) as mocked_trace:
+                    result, meta = module.generate_rule_candidate_with_ai(
+                        "dwd_sec",
+                        {"tbl": "dwd_cst_pay_cost_detail", "dest_tbl": "dwd_cst_pay_cost_detail", "columns": '[]'},
+                        "missing fields",
+                        git_roots=[],
+                        return_meta=True,
+                    )
+            self.assertIsNone(result)
+            self.assertEqual(meta["status"], "ai_request_failed")
+            mocked_trace.assert_called_once()
+        finally:
+            module.QUALITY_RULE_AI_CONFIG.clear()
+            module.QUALITY_RULE_AI_CONFIG.update(original)
+
     def test_maybe_trace_langfuse_uses_http_fallback_when_sdk_missing(self):
         original = dict(module.QUALITY_RULE_AI_CONFIG)
         try:
@@ -229,16 +259,18 @@ class QualityRuleAiHelperTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            match_file = root / "matched.sql"
+            match_file = root / "dwd_cst_pay_cost_detail.sql"
+            init_file = root / "init_dwd_cst_pay_cost_detail.sql"
             other_file = root / "other.sql"
             match_file.write_text("select * from ods_repay_cpop_income_item where create_at >= '{begin}'")
+            init_file.write_text("init sql with dwd_cst_pay_cost_detail")
             other_file.write_text("select * from something_else")
 
             snippets = module.collect_git_context(
                 "dwd_cst_pay_cost_detail",
                 src_tbl="ods_repay_cpop_income_item",
                 git_roots=[str(root)],
-                preferred_paths=[str(match_file), str(other_file)],
+                preferred_paths=[str(init_file), str(match_file), str(other_file)],
             )
 
             self.assertEqual(len(snippets), 1)

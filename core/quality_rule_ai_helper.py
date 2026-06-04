@@ -87,6 +87,36 @@ def extract_relevant_git_snippet(text, keywords, window=500, max_chars=1200):
     return text[:max_chars]
 
 
+def choose_best_git_context_path(paths, dest_tbl, src_tbl=None):
+    candidates = [Path(p) for p in paths if p]
+    if not candidates:
+        return []
+
+    def score(path):
+        name = path.name.lower()
+        stem = path.stem.lower()
+        dest = (dest_tbl or '').lower()
+        src = (src_tbl or '').lower()
+        points = 0
+        if path.suffix.lower() == '.sql':
+            points += 50
+        if stem == dest:
+            points += 100
+        if src and stem == src:
+            points += 80
+        if name.startswith('init_'):
+            points -= 20
+        if dest and dest in name:
+            points += 20
+        if src and src in name:
+            points += 10
+        points -= len(name) / 1000
+        return points
+
+    best = max(candidates, key=score)
+    return [best]
+
+
 def collect_git_context(dest_tbl, src_tbl=None, git_roots=None, limit=1, preferred_paths=None):
     table_names = [dest_tbl]
     if src_tbl:
@@ -102,6 +132,7 @@ def collect_git_context(dest_tbl, src_tbl=None, git_roots=None, limit=1, preferr
         if path_obj.exists() and path_obj.is_file():
             preferred.append(path_obj)
 
+    preferred = choose_best_git_context_path(preferred, dest_tbl, src_tbl=src_tbl)
     candidate_iter = preferred if preferred else iter_git_candidate_files(git_roots, table_names)
     snippet_keywords = [dest_tbl, src_tbl, ' where ', ' join ', ' from ', 'create_at', 'created_at', 'etl_create_time', 'etl_update_time']
     for path in candidate_iter:
@@ -406,6 +437,10 @@ def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_ro
     except Exception as exc:
         meta["status"] = "ai_request_failed"
         meta["reason"] = str(exc)
+        try:
+            maybe_trace_langfuse(messages, "", {"status": "ai_request_failed", "reason": str(exc)})
+        except Exception:
+            pass
         return (None, meta) if return_meta else None
     try:
         parsed = extract_json_object(response_text)
