@@ -83,12 +83,31 @@ def parse_json_list(raw_value):
 def parse_git_roots(raw_value=None):
     text = raw_value if raw_value is not None else os.environ.get("QUALITY_GIT_SCAN_ROOTS", "")
     if not text:
-        return [root for root in DEFAULT_GIT_SCAN_ROOTS if os.path.isdir(root)]
+        return default_git_scan_roots()
     roots = []
     for item in text.split(","):
         normalized = item.strip()
         if normalized:
             roots.append(normalized)
+    return roots
+
+
+def default_git_scan_roots():
+    country = (os.environ.get("QUALITY_RULE_FORM_COUNTRY") or "ph").strip().lower()
+    candidates = [
+        f"/data/git/starrocks/workflow/{country}",
+        "/data/git/starrocks/workflow",
+        "/data/git/starrocks.bk/workflow",
+        *DEFAULT_GIT_SCAN_ROOTS,
+    ]
+    seen = set()
+    roots = []
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if os.path.isdir(candidate):
+            roots.append(candidate)
     return roots
 
 
@@ -108,6 +127,8 @@ def looks_like_time_field(field_name):
 
 def iter_git_candidate_files(git_roots, table_names):
     lowered_tables = tuple(str(name).lower() for name in table_names if name)
+    file_name_matches = []
+    fallback_matches = []
     for root in git_roots:
         root_path = Path(root)
         if not root_path.exists():
@@ -119,9 +140,14 @@ def iter_git_candidate_files(git_roots, table_names):
                 continue
             if ".git" in path.parts:
                 continue
-            if lowered_tables and not any(table in path.name.lower() for table in lowered_tables):
-                continue
-            yield path
+            if lowered_tables and any(table in path.name.lower() for table in lowered_tables):
+                file_name_matches.append(path)
+            else:
+                fallback_matches.append(path)
+    if file_name_matches:
+        yield from file_name_matches
+    else:
+        yield from fallback_matches
 
 
 def infer_git_rule_hints(dest_tbl, src_tbl=None, git_roots=None):

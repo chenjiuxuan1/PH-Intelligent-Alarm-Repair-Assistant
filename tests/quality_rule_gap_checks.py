@@ -334,6 +334,56 @@ class QualityRuleGapScannerTests(unittest.TestCase):
         self.assertEqual(hints["check_field"], "etl_create_time")
         self.assertEqual(Path(hints["git_matches"][0]).name, "dwd_user_member_log.sql")
 
+    def test_parse_git_roots_prefers_country_specific_starrocks_workflow_directory(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workflow_root = Path(temp_dir) / "starrocks" / "workflow" / "ph"
+            workflow_root.mkdir(parents=True)
+            backup_root = Path(temp_dir) / "starrocks.bk" / "workflow"
+            backup_root.mkdir(parents=True)
+            unused_root = Path(temp_dir) / "unused"
+
+            with mock.patch.object(module, "DEFAULT_GIT_SCAN_ROOTS", (str(unused_root),)):
+                with mock.patch.dict(module.os.environ, {"QUALITY_RULE_FORM_COUNTRY": "ph"}, clear=False):
+                    with mock.patch.object(module.os.path, "isdir", side_effect=lambda path: Path(path).is_dir()):
+                        with mock.patch.object(
+                            module,
+                            "default_git_scan_roots",
+                            wraps=lambda: [
+                                path
+                                for path in (
+                                    str(workflow_root),
+                                    str(Path(temp_dir) / "starrocks" / "workflow"),
+                                    str(backup_root),
+                                )
+                                if Path(path).is_dir()
+                            ],
+                        ):
+                            roots = module.default_git_scan_roots()
+
+        self.assertEqual(roots[0], str(workflow_root))
+
+    def test_infer_git_rule_hints_can_fallback_to_content_scan_when_filename_does_not_match(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            sql_path = Path(temp_dir) / "job_001.sql"
+            sql_path.write_text(
+                """
+                insert overwrite dwd.dwd_asset_tc_vprod_order
+                select *
+                from ods.ods_r2_tc_vprod_order
+                where created_at >= '${begin}'
+                  and created_at < '${end}'
+                """,
+                encoding="utf-8",
+            )
+
+            hints = module.infer_git_rule_hints("dwd_asset_tc_vprod_order", git_roots=[temp_dir])
+
+        self.assertEqual(hints["dep_tbls"], ["ods.ods_r2_tc_vprod_order"])
+        self.assertEqual(hints["check_field"], "created_at")
+        self.assertEqual(Path(hints["git_matches"][0]).name, "job_001.sql")
+
     def test_build_count_rule_candidate_marks_missing_dep_tbls_as_blocked(self):
         module = load_module()
         table = {

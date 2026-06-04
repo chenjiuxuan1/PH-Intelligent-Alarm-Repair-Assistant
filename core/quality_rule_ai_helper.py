@@ -12,6 +12,25 @@ from config.config import QUALITY_RULE_AI_CONFIG
 CODE_FILE_SUFFIXES = (".sql", ".py", ".scala", ".sh", ".yaml", ".yml", ".json")
 
 
+def default_git_scan_roots():
+    country = (os.environ.get("QUALITY_RULE_FORM_COUNTRY") or "ph").strip().lower()
+    candidates = [
+        f"/data/git/starrocks/workflow/{country}",
+        "/data/git/starrocks/workflow",
+        "/data/git/starrocks.bk/workflow",
+        "/data/git",
+    ]
+    seen = set()
+    roots = []
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if os.path.isdir(candidate):
+            roots.append(candidate)
+    return roots
+
+
 def ai_fallback_available():
     return bool(
         QUALITY_RULE_AI_CONFIG.get("enabled")
@@ -26,7 +45,10 @@ def ai_fallback_available():
 
 def iter_git_candidate_files(git_roots, table_names):
     lowered_tables = tuple(str(name).lower() for name in table_names if name)
-    for root in git_roots or []:
+    file_name_matches = []
+    fallback_matches = []
+    roots = list(git_roots or []) or default_git_scan_roots()
+    for root in roots:
         root_path = Path(root)
         if not root_path.exists():
             continue
@@ -37,9 +59,14 @@ def iter_git_candidate_files(git_roots, table_names):
                 continue
             if ".git" in path.parts:
                 continue
-            if lowered_tables and not any(table in path.name.lower() for table in lowered_tables):
-                continue
-            yield path
+            if lowered_tables and any(table in path.name.lower() for table in lowered_tables):
+                file_name_matches.append(path)
+            else:
+                fallback_matches.append(path)
+    if file_name_matches:
+        yield from file_name_matches
+    else:
+        yield from fallback_matches
 
 
 def collect_git_context(dest_tbl, src_tbl=None, git_roots=None, limit=3):
