@@ -180,9 +180,38 @@ class QualityRuleConfirmationTests(unittest.TestCase):
         )
 
         self.assertEqual(second_new_items, [])
-        self.assertEqual(backlog["items"][key]["status"], "blocked")
+        self.assertEqual(backlog["items"][key]["status"], "pending_confirmation")
+        self.assertEqual(backlog["items"][key]["scan_status"], "blocked")
         self.assertEqual(backlog["items"][key]["reason"], "AI 与规则推断都失败")
         self.assertEqual(backlog["items"][key]["rescan_at"], "2026-06-04 12:10:00")
+
+    def test_merge_candidates_into_backlog_adds_new_blocked_item_for_manual_follow_up(self):
+        module, _ = load_module()
+        blocked = {
+            "status": "blocked",
+            "database": "dwd",
+            "rule_name": "cnt",
+            "dest_tbl": "dwd_user_member_log",
+            "dest_db": "dwd",
+            "src_db": "ods",
+            "src_tbl": "ods_user_member_log",
+            "src_sql": "",
+            "dest_sql": "",
+            "check_field": "",
+            "git_matches": ["/data/git/workflow/ph/dwd/job.sql"],
+            "reason": "src_check_field/dest_check_field 不一致",
+        }
+
+        backlog, new_items = module.merge_candidates_into_backlog(
+            [blocked],
+            backlog={"items": {}},
+            detected_at="2026-06-04 12:00:00",
+        )
+
+        self.assertEqual(len(new_items), 1)
+        self.assertEqual(new_items[0]["status"], "pending_confirmation")
+        self.assertEqual(new_items[0]["scan_status"], "blocked")
+        self.assertEqual(new_items[0]["reason"], "src_check_field/dest_check_field 不一致")
 
     def test_format_tv_confirmation_message_includes_sheet_url_and_candidate_key(self):
         module, _ = load_module()

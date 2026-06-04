@@ -82,6 +82,39 @@ def candidate_to_backlog_item(item, detected_at=None):
         "reason": item.get("reason", ""),
         "git_matches": candidate.get("git_matches", []),
         "detected_at": detected_at,
+        "scan_status": item.get("status", "candidate"),
+        "notified_at": None,
+        "form_submitted_at": None,
+        "decision": "",
+        "decision_notes": "",
+        "decision_operator": "",
+        "decision_submitted_at": "",
+        "applied_at": "",
+    }
+
+
+def result_to_backlog_item(item, detected_at=None):
+    if item.get("candidate"):
+        return candidate_to_backlog_item(item, detected_at=detected_at)
+
+    detected_at = detected_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return {
+        "candidate_key": build_candidate_key(item),
+        "country": item.get("country") or QUALITY_RULE_FORM_CONFIG.get("country", "ph"),
+        "status": "pending_confirmation",
+        "database": item["database"],
+        "rule_name": item["rule_name"],
+        "dest_db": item["dest_db"],
+        "dest_tbl": item["dest_tbl"],
+        "src_db": item.get("src_db", ""),
+        "src_tbl": item.get("src_tbl", ""),
+        "check_field": item.get("check_field") or "",
+        "src_sql": item.get("src_sql", ""),
+        "dest_sql": item.get("dest_sql", ""),
+        "reason": item.get("reason", ""),
+        "git_matches": item.get("git_matches", []),
+        "detected_at": detected_at,
+        "scan_status": item.get("status", "blocked"),
         "notified_at": None,
         "form_submitted_at": None,
         "decision": "",
@@ -98,15 +131,16 @@ def merge_candidates_into_backlog(results, backlog=None, detected_at=None):
     new_items = []
     for item in results:
         key = build_candidate_key(item)
-        if item.get("status") != "candidate":
+        if item.get("status") in {"existing", "skipped"}:
             existing = items.get(key)
             if existing and existing.get("status") == "pending_confirmation":
                 existing["status"] = item.get("status")
                 existing["reason"] = item.get("reason", existing.get("reason", ""))
+                existing["scan_status"] = item.get("status")
                 existing["rescan_at"] = detected_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             continue
 
-        backlog_item = candidate_to_backlog_item(item, detected_at=detected_at)
+        backlog_item = result_to_backlog_item(item, detected_at=detected_at)
         if key not in items:
             items[key] = backlog_item
             new_items.append(backlog_item)
@@ -125,6 +159,7 @@ def merge_candidates_into_backlog(results, backlog=None, detected_at=None):
                 "decision_dest_sql": existing.get("decision_dest_sql", ""),
                 "decision_human_check": existing.get("decision_human_check", ""),
                 "applied_at": existing.get("applied_at", ""),
+                "rescan_at": detected_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }
             backlog_item.update(preserved)
             items[key] = backlog_item

@@ -202,6 +202,14 @@ def source_field_is_verified(field_name, table, git_context):
     return False
 
 
+def count_rule_fields_are_consistent(parsed_output):
+    src_check_field = (parsed_output.get("src_check_field") or "").strip()
+    dest_check_field = (parsed_output.get("dest_check_field") or "").strip()
+    if not src_check_field or not dest_check_field:
+        return False
+    return src_check_field.lower() == dest_check_field.lower()
+
+
 def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_roots=None):
     if not ai_fallback_available():
         return None
@@ -231,6 +239,9 @@ def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_ro
         return None
 
     if not source_field_is_verified(parsed.get("src_check_field"), table, git_context):
+        return None
+
+    if not count_rule_fields_are_consistent(parsed):
         return None
 
     required_keys = ["src_db", "src_tbl", "src_sql", "dest_sql"]

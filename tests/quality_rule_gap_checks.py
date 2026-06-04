@@ -109,7 +109,7 @@ class QualityRuleGapScannerTests(unittest.TestCase):
             "db": "dwd",
             "tbl": "dwd_user_member_log",
             "dep_tbls": json.dumps(["ods_user_member_log"]),
-            "increment_field": "etl_create_time",
+            "increment_field": "created_at",
             "check_field": "",
         }
         ods_table_by_dest = {
@@ -126,11 +126,11 @@ class QualityRuleGapScannerTests(unittest.TestCase):
         self.assertEqual(result["status"], "candidate")
         self.assertEqual(result["candidate"]["src_db"], "ods")
         self.assertEqual(result["candidate"]["src_tbl"], "ods_user_member_log")
-        self.assertEqual(result["candidate"]["check_field"], "etl_create_time")
+        self.assertEqual(result["candidate"]["check_field"], "created_at")
         self.assertEqual(result["candidate"]["src_check_field"], "created_at")
         self.assertIn("SELECT COUNT(*)", result["candidate"]["src_sql"])
 
-    def test_build_count_rule_candidate_uses_different_source_and_target_check_fields(self):
+    def test_build_count_rule_candidate_blocks_inconsistent_source_and_target_check_fields(self):
         module = load_module()
         table = {
             "id": 1,
@@ -149,13 +149,12 @@ class QualityRuleGapScannerTests(unittest.TestCase):
             }
         }
 
-        result = module.build_count_rule_candidate("dwd", table, {}, ods_table_by_dest)
+        with mock.patch.object(module, "generate_rule_candidate_with_ai", return_value=None):
+            result = module.build_count_rule_candidate("dwd", table, {}, ods_table_by_dest)
 
-        self.assertEqual(result["status"], "candidate")
-        self.assertEqual(result["candidate"]["src_check_field"], "created_at")
-        self.assertEqual(result["candidate"]["dest_check_field"], "etl_create_time")
-        self.assertIn("WHERE created_at >=", result["candidate"]["src_sql"])
-        self.assertIn("WHERE etl_create_time >=", result["candidate"]["dest_sql"])
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("不一致", result["reason"])
+        self.assertEqual(result["src_tbl"], "ods_r2_tc_vprod_order")
 
     def test_build_count_rule_candidate_does_not_accept_cross_table_generic_source_etl_field(self):
         module = load_module()
@@ -497,7 +496,7 @@ class QualityRuleGapScannerTests(unittest.TestCase):
     def test_scan_quality_rule_gaps_mirrors_database_scope(self):
         fake_cursor = FakeCursor(
             [
-                [{"id": 1, "db": "dwd", "tbl": "dwd_user_member_log", "dep_tbls": json.dumps(["ods_user_member_log"]), "increment_field": "etl_create_time", "check_field": ""}],
+                [{"id": 1, "db": "dwd", "tbl": "dwd_user_member_log", "dep_tbls": json.dumps(["ods_user_member_log"]), "increment_field": "created_at", "check_field": ""}],
                 [],
                 [{"dest_tbl": "ods_user_member_log", "check_field": "", "columns": json.dumps(["id", "created_at"]), "src_tbl": "user_member_log"}],
             ]
