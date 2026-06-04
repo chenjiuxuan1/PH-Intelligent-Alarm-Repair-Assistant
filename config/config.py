@@ -211,8 +211,8 @@ QUALITY_RULE_AI_DEFAULTS = {
     "api_key": "",
     "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     "model": "qwen3.6-plus",
-    "langfuse_secret_key": "",
-    "langfuse_public_key": "",
+    "langfuse_secret_key": "sk-lf-fbde8223-da9e-4869-9d88-ba919e45f604",
+    "langfuse_public_key": "pk-lf-586c391a-f4f9-4356-92f5-97100828e72c",
     "langfuse_base_url": "https://langfuse.kuainiu.io",
 }
 
