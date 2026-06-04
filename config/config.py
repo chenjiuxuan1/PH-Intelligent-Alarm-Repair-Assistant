@@ -213,8 +213,27 @@ QUALITY_RULE_FORM_CONFIG = {
         "QUALITY_RULE_FORM_POST_URL",
         "https://docs.google.com/forms/d/e/1FAIpQLSd-nOOjGFTgd4UMcP4_tyESsN225VgbZoEfEFs0ZWGAuo_Bww/formResponse",
     ),
-    "field_map": json.loads(_get_env("QUALITY_RULE_FORM_FIELD_MAP_JSON", "{}")),
-    "required_fields": json.loads(_get_env("QUALITY_RULE_FORM_REQUIRED_FIELDS_JSON", '["submission_type", "candidate_key", "country", "database", "tbl", "need_apply"]')),
+    "field_map": json.loads(
+        _get_env(
+            "QUALITY_RULE_FORM_FIELD_MAP_JSON",
+            json.dumps(
+                {
+                    "country": "entry.1455408819",
+                    "database": "entry.1720032919",
+                    "tbl": "entry.1627525963",
+                    "need_apply": "entry.550423081",
+                    "candidate_key": "entry.1797014868",
+                },
+                ensure_ascii=False,
+            ),
+        )
+    ),
+    "required_fields": json.loads(
+        _get_env(
+            "QUALITY_RULE_FORM_REQUIRED_FIELDS_JSON",
+            '["candidate_key", "country", "database", "tbl", "need_apply"]',
+        )
+    ),
     "confirmation_export_url": _get_env(
         "QUALITY_RULE_CONFIRMATION_EXPORT_URL",
         "https://docs.google.com/spreadsheets/d/1xh4MSxN-sgdfKZnpGmnY-OujnneimfAp7cgVdtct6SQ/export?format=csv&gid=160372088",
