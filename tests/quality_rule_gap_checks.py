@@ -119,6 +119,33 @@ class QualityRuleGapScannerTests(unittest.TestCase):
         self.assertEqual(result["candidate"]["check_field"], "etl_create_time")
         self.assertIn("SELECT COUNT(*)", result["candidate"]["src_sql"])
 
+    def test_build_count_rule_candidate_uses_different_source_and_target_check_fields(self):
+        module = load_module()
+        table = {
+            "id": 1,
+            "db": "dwd",
+            "tbl": "dwd_asset_tc_vprod_order",
+            "dep_tbls": json.dumps(["ods_r2_tc_vprod_order"]),
+            "increment_field": "etl_create_time",
+            "check_field": "",
+        }
+        ods_table_by_dest = {
+            "ods_r2_tc_vprod_order": {
+                "dest_tbl": "ods_r2_tc_vprod_order",
+                "check_field": "",
+                "columns": json.dumps(["id", "created_at", "order_no"]),
+                "src_tbl": "r2_tc_vprod_order",
+            }
+        }
+
+        result = module.build_count_rule_candidate("dwd", table, {}, ods_table_by_dest)
+
+        self.assertEqual(result["status"], "candidate")
+        self.assertEqual(result["candidate"]["src_check_field"], "created_at")
+        self.assertEqual(result["candidate"]["dest_check_field"], "etl_create_time")
+        self.assertIn("WHERE created_at >=", result["candidate"]["src_sql"])
+        self.assertIn("WHERE etl_create_time >=", result["candidate"]["dest_sql"])
+
     def test_infer_git_rule_hints_extracts_dep_table_and_check_field(self):
         module = load_module()
         with tempfile.TemporaryDirectory() as temp_dir:

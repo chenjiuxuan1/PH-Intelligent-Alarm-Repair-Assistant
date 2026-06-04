@@ -220,7 +220,7 @@ def enrich_etl_table_info(table, ods_table_by_dest, git_roots=None):
     table["dest_db"] = table.get("db")
 
     src_table_info = ods_table_by_dest.get(table["src_tbl"])
-    if src_table_info and src_table_info.get("check_field"):
+    if src_table_info:
         table["origin_check_field"] = src_table_info.get("check_field")
         table["columns"] = src_table_info.get("columns")
         table["origin_src_tbl"] = src_table_info.get("src_tbl")
@@ -228,17 +228,17 @@ def enrich_etl_table_info(table, ods_table_by_dest, git_roots=None):
     return table, None
 
 
-def infer_check_field(table, git_roots=None):
-    existing = table.get("check_field")
-    if existing:
-        return existing
-
+def infer_source_check_field(table, git_roots=None):
     dest_db = table.get("dest_db")
     if dest_db in ("ods", "ods_security"):
         return determine_create_field(table)
 
     if table.get("origin_check_field"):
         return table.get("origin_check_field")
+
+    source_create_field = determine_create_field(table)
+    if source_create_field:
+        return source_create_field
 
     if table.get("increment_field"):
         return table.get("increment_field")
@@ -251,35 +251,67 @@ def infer_check_field(table, git_roots=None):
     return git_hints.get("check_field")
 
 
-def build_sql_statements(src_db, src_table, target_db, target_table, check_field, table):
-    if check_field is None:
+def infer_target_check_field(table, git_roots=None):
+    existing = table.get("check_field")
+    if existing:
+        return existing
+
+    dest_db = table.get("dest_db")
+    if dest_db in ("ods", "ods_security"):
+        return determine_create_field(table)
+
+    if table.get("increment_field"):
+        return table.get("increment_field")
+
+    git_hints = infer_git_rule_hints(
+        table.get("dest_tbl") or table.get("tbl") or "",
+        src_tbl=table.get("src_tbl"),
+        git_roots=git_roots,
+    )
+    return git_hints.get("check_field")
+
+
+def build_sql_statements(src_db, src_table, target_db, target_table, src_check_field, dest_check_field, table):
+    if src_check_field is None and dest_check_field is None:
         src_sql = f"SELECT COUNT(*) as cnt FROM {src_db}.{src_table}"
         dest_sql = f"SELECT COUNT(*) as cnt FROM {target_db}.{target_table}"
         return src_sql, dest_sql
 
-    if "_id" in check_field:
-        check_create_field = determine_create_field(table)
-        if not check_create_field:
+    id_field = None
+    if src_check_field and dest_check_field and src_check_field == dest_check_field and "_id" in src_check_field:
+        id_field = src_check_field
+    elif src_check_field and "_id" in src_check_field and not dest_check_field:
+        id_field = src_check_field
+    elif dest_check_field and "_id" in dest_check_field and not src_check_field:
+        id_field = dest_check_field
+
+    if id_field:
+        src_create_field = infer_source_check_field(table)
+        dest_create_field = infer_target_check_field(table)
+        if not src_create_field or not dest_create_field:
             return None, None
         src_sql = (
-            f"SET @min_id = IFNULL((SELECT MIN({check_field}) FROM {target_db}.{target_table} WHERE {check_create_field} >= '{{begin}}'),0);"
-            f"SET @max_id = (SELECT MAX({check_field}) FROM {src_db}.{src_table} WHERE {check_field} >= @min_id AND {check_create_field} < '{{end}}');"
-            f"SELECT COUNT(*) AS cnt FROM {src_db}.`{src_table}` WHERE {check_field} >= @min_id AND {check_field} <= @max_id;"
+            f"SET @min_id = IFNULL((SELECT MIN({id_field}) FROM {target_db}.{target_table} WHERE {dest_create_field} >= '{{begin}}'),0);"
+            f"SET @max_id = (SELECT MAX({id_field}) FROM {src_db}.{src_table} WHERE {id_field} >= @min_id AND {src_create_field} < '{{end}}');"
+            f"SELECT COUNT(*) AS cnt FROM {src_db}.`{src_table}` WHERE {id_field} >= @min_id AND {id_field} <= @max_id;"
         )
         dest_sql = (
-            f"SET @min_id = IFNULL((SELECT MIN({check_field}) FROM {target_db}.{target_table} WHERE {check_create_field} >= '{{begin}}'),0);"
-            f"SET @max_id = (SELECT MAX({check_field}) FROM {target_db}.{target_table} WHERE {check_create_field} < '{{end}}');"
-            f"SELECT COUNT(*) AS cnt FROM {target_db}.`{target_table}` WHERE {check_field} >= @min_id AND {check_field} <= @max_id;"
+            f"SET @min_id = IFNULL((SELECT MIN({id_field}) FROM {target_db}.{target_table} WHERE {dest_create_field} >= '{{begin}}'),0);"
+            f"SET @max_id = (SELECT MAX({id_field}) FROM {target_db}.{target_table} WHERE {dest_create_field} < '{{end}}');"
+            f"SELECT COUNT(*) AS cnt FROM {target_db}.`{target_table}` WHERE {id_field} >= @min_id AND {id_field} <= @max_id;"
         )
         return src_sql, dest_sql
 
+    if not src_check_field or not dest_check_field:
+        return None, None
+
     src_sql = (
         f"SELECT COUNT(*) as cnt FROM {src_db}.`{src_table}` "
-        f"WHERE {check_field} >= '{{begin}}' AND {check_field} < '{{end}}'"
+        f"WHERE {src_check_field} >= '{{begin}}' AND {src_check_field} < '{{end}}'"
     )
     dest_sql = (
         f"SELECT COUNT(*) as cnt FROM {target_db}.{target_table} "
-        f"WHERE {check_field} >= '{{begin}}' AND {check_field} < '{{end}}'"
+        f"WHERE {dest_check_field} >= '{{begin}}' AND {dest_check_field} < '{{end}}'"
     )
     return src_sql, dest_sql
 
@@ -361,17 +393,19 @@ def build_count_rule_candidate(database_name, table, rule_map, ods_table_by_dest
             }
 
     if database_name != "dim":
-        check_field = infer_check_field(working_table, git_roots=git_roots)
-        if not check_field:
+        src_check_field = infer_source_check_field(working_table, git_roots=git_roots)
+        dest_check_field = infer_target_check_field(working_table, git_roots=git_roots)
+        if not src_check_field or not dest_check_field:
             return {
                 "status": "blocked",
                 "rule_name": COUNT_RULE_NAME,
                 "dest_tbl": target_table,
                 "dest_db": working_table.get("dest_db") or working_table.get("db"),
-                "reason": "无法推断 check_field",
+                "reason": "无法推断 src_check_field/dest_check_field",
             }
     else:
-        check_field = None
+        src_check_field = None
+        dest_check_field = None
 
     src_db = working_table.get("src_db")
     src_table = working_table.get("src_tbl")
@@ -390,7 +424,8 @@ def build_count_rule_candidate(database_name, table, rule_map, ods_table_by_dest
         src_table,
         target_db,
         target_table,
-        check_field,
+        src_check_field,
+        dest_check_field,
         working_table,
     )
     if not src_sql or not dest_sql:
@@ -412,7 +447,9 @@ def build_count_rule_candidate(database_name, table, rule_map, ods_table_by_dest
         "src_sql": src_sql,
         "dest_sql": dest_sql,
         "msg_template": COUNT_MSG_TEMPLATE,
-        "check_field": check_field,
+        "check_field": dest_check_field,
+        "src_check_field": src_check_field,
+        "dest_check_field": dest_check_field,
         "git_matches": working_table.get("git_matches", []),
     }
     return {
