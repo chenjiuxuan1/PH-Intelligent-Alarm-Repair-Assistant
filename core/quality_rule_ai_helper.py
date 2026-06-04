@@ -134,7 +134,9 @@ def build_ai_messages(database_name, table, git_context, failure_reason):
             "如果无法可靠判断，也要返回最合理的候选，并在 reason 中说明依据。",
         ],
     }
-    user_prompt = json.dumps(payload, ensure_ascii=False, indent=2)
+    # Keep the prompt ASCII-safe so remote HTTP/client stacks never try to
+    # encode raw CJK characters with latin-1.
+    user_prompt = json.dumps(payload, ensure_ascii=True, indent=2)
     return [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
@@ -231,7 +233,7 @@ def trace_langfuse_via_http(messages, response_text, parsed_output):
     }
     req = urllib.request.Request(
         f"{host}/api/public/ingestion",
-        data=json.dumps(batch, ensure_ascii=False).encode("utf-8"),
+        data=json.dumps(batch, ensure_ascii=True).encode("utf-8"),
         headers={
             "Authorization": f"Basic {basic}",
             "Content-Type": "application/json",
@@ -246,7 +248,34 @@ def trace_langfuse_via_http(messages, response_text, parsed_output):
         return False
 
 
-def request_openai_compatible_completion(messages):
+def request_openai_compatible_completion_via_sdk(messages):
+    try:
+        from openai import OpenAI
+    except Exception as exc:
+        raise RuntimeError(f"openai_sdk_unavailable: {exc}") from exc
+
+    base_url = (QUALITY_RULE_AI_CONFIG.get("base_url") or "").rstrip("/")
+    api_key = QUALITY_RULE_AI_CONFIG.get("api_key")
+    if not base_url or not api_key:
+        raise ValueError("missing base_url or api_key")
+
+    client = OpenAI(api_key=api_key, base_url=base_url)
+    completion = client.chat.completions.create(
+        model=QUALITY_RULE_AI_CONFIG.get("model"),
+        messages=messages,
+    )
+    choice = (completion.choices or [None])[0]
+    message = getattr(choice, "message", None)
+    if message is None and isinstance(choice, dict):
+        message = choice.get("message")
+    if message is None:
+        return ""
+    if isinstance(message, dict):
+        return message.get("content") or ""
+    return getattr(message, "content", "") or ""
+
+
+def request_openai_compatible_completion_via_http(messages):
     payload = {
         "model": QUALITY_RULE_AI_CONFIG.get("model"),
         "messages": messages,
@@ -258,7 +287,7 @@ def request_openai_compatible_completion(messages):
 
     req = urllib.request.Request(
         f"{base_url}/chat/completions",
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        data=json.dumps(payload, ensure_ascii=True).encode("utf-8"),
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -279,6 +308,16 @@ def request_openai_compatible_completion(messages):
         return ""
     message = choices[0].get("message") or {}
     return message.get("content") or ""
+
+
+def request_openai_compatible_completion(messages):
+    try:
+        return request_openai_compatible_completion_via_sdk(messages)
+    except Exception as sdk_exc:
+        try:
+            return request_openai_compatible_completion_via_http(messages)
+        except Exception as http_exc:
+            raise RuntimeError(f"sdk_error={sdk_exc}; http_error={http_exc}") from http_exc
 
 
 def source_field_is_verified(field_name, table, git_context):
@@ -357,20 +396,7 @@ def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_ro
     meta["attempted"] = True
     meta["status"] = "requested"
     try:
-        try:
-            from openai import OpenAI
-
-            client = OpenAI(
-                api_key=QUALITY_RULE_AI_CONFIG.get("api_key"),
-                base_url=QUALITY_RULE_AI_CONFIG.get("base_url"),
-            )
-            completion = client.chat.completions.create(
-                model=QUALITY_RULE_AI_CONFIG.get("model"),
-                messages=messages,
-            )
-            response_text = completion.choices[0].message.content if completion.choices else ""
-        except Exception:
-            response_text = request_openai_compatible_completion(messages)
+        response_text = request_openai_compatible_completion(messages)
     except Exception as exc:
         meta["status"] = "ai_request_failed"
         meta["reason"] = str(exc)
