@@ -270,8 +270,16 @@ def infer_source_check_field(table, git_roots=None):
     if git_hints.get("check_field"):
         return git_hints.get("check_field")
 
-    if table.get("increment_field"):
-        return table.get("increment_field")
+    increment_field = table.get("increment_field")
+    if increment_field:
+        # Source-side fallback is only trustworthy when we can verify the field
+        # from source metadata. Generic ETL timestamps like etl_create_time on
+        # downstream tables should trigger AI fallback instead of being copied
+        # blindly to the upstream SQL.
+        if columns and increment_field in columns:
+            return increment_field
+        if not increment_field.lower().startswith("etl_"):
+            return increment_field
 
     return None
 

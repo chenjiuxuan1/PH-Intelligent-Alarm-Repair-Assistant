@@ -112,13 +112,22 @@ class QualityRuleGapScannerTests(unittest.TestCase):
             "increment_field": "etl_create_time",
             "check_field": "",
         }
+        ods_table_by_dest = {
+            "ods_user_member_log": {
+                "dest_tbl": "ods_user_member_log",
+                "check_field": "",
+                "columns": json.dumps(["id", "created_at", "other_field"]),
+                "src_tbl": "user_member_log",
+            }
+        }
 
-        result = module.build_count_rule_candidate("dwd", table, {}, {})
+        result = module.build_count_rule_candidate("dwd", table, {}, ods_table_by_dest)
 
         self.assertEqual(result["status"], "candidate")
         self.assertEqual(result["candidate"]["src_db"], "ods")
         self.assertEqual(result["candidate"]["src_tbl"], "ods_user_member_log")
         self.assertEqual(result["candidate"]["check_field"], "etl_create_time")
+        self.assertEqual(result["candidate"]["src_check_field"], "created_at")
         self.assertIn("SELECT COUNT(*)", result["candidate"]["src_sql"])
 
     def test_build_count_rule_candidate_uses_different_source_and_target_check_fields(self):
@@ -194,6 +203,40 @@ class QualityRuleGapScannerTests(unittest.TestCase):
         check_field = module.infer_source_check_field(table)
 
         self.assertEqual(check_field, "created_at")
+
+    def test_infer_source_check_field_returns_none_for_unverified_etl_increment_field(self):
+        module = load_module()
+        table = {
+            "db": "dwd",
+            "tbl": "dwd_asset_tc_vprod_order",
+            "dest_tbl": "dwd_asset_tc_vprod_order",
+            "src_tbl": "ods_r2_tc_vprod_order",
+            "src_db": "ods",
+            "increment_field": "etl_create_time",
+            "columns": None,
+            "origin_check_field": None,
+        }
+
+        check_field = module.infer_source_check_field(table)
+
+        self.assertIsNone(check_field)
+
+    def test_infer_source_check_field_allows_etl_increment_field_when_present_in_source_columns(self):
+        module = load_module()
+        table = {
+            "db": "dwd",
+            "tbl": "dwd_x",
+            "dest_tbl": "dwd_x",
+            "src_tbl": "ods_x",
+            "src_db": "ods",
+            "increment_field": "etl_create_time",
+            "columns": json.dumps(["id", "etl_create_time"]),
+            "origin_check_field": None,
+        }
+
+        check_field = module.infer_source_check_field(table)
+
+        self.assertEqual(check_field, "etl_create_time")
 
     def test_infer_git_rule_hints_extracts_dep_table_and_check_field(self):
         module = load_module()
@@ -334,7 +377,7 @@ class QualityRuleGapScannerTests(unittest.TestCase):
             [
                 [{"id": 1, "db": "dwd", "tbl": "dwd_user_member_log", "dep_tbls": json.dumps(["ods_user_member_log"]), "increment_field": "etl_create_time", "check_field": ""}],
                 [],
-                [],
+                [{"dest_tbl": "ods_user_member_log", "check_field": "", "columns": json.dumps(["id", "created_at"]), "src_tbl": "user_member_log"}],
             ]
         )
         fake_conn = FakeConnection(fake_cursor)
