@@ -163,3 +163,58 @@ class QualityRuleAiHelperTests(unittest.TestCase):
         finally:
             module.QUALITY_RULE_AI_CONFIG.clear()
             module.QUALITY_RULE_AI_CONFIG.update(original)
+
+    def test_generate_rule_candidate_with_ai_uses_http_fallback_when_openai_missing(self):
+        original = dict(module.QUALITY_RULE_AI_CONFIG)
+        try:
+            module.QUALITY_RULE_AI_CONFIG.update(
+                {
+                    "enabled": True,
+                    "api_key": "dashscope-key",
+                    "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                    "model": "qwen3.6-plus",
+                    "langfuse_secret_key": "secret",
+                    "langfuse_public_key": "public",
+                    "langfuse_base_url": "https://langfuse.kuainiu.io",
+                }
+            )
+            with mock.patch.object(
+                module,
+                "request_openai_compatible_completion",
+                return_value='{"src_db":"ods","src_tbl":"ods_x","src_check_field":"create_at","dest_check_field":"create_at","src_sql":"select 1","dest_sql":"select 2","reason":"http fallback"}',
+            ):
+                with mock.patch.object(module, "maybe_trace_langfuse", return_value=True):
+                    with mock.patch.dict(sys.modules, {"openai": None}):
+                        result, meta = module.generate_rule_candidate_with_ai(
+                            "dwd",
+                            {"tbl": "dwd_x", "dest_tbl": "dwd_x", "columns": '["create_at"]'},
+                            "missing fields",
+                            git_roots=[],
+                            return_meta=True,
+                        )
+
+            self.assertIsNotNone(result)
+            self.assertEqual(result["src_tbl"], "ods_x")
+            self.assertEqual(meta["status"], "ok")
+        finally:
+            module.QUALITY_RULE_AI_CONFIG.clear()
+            module.QUALITY_RULE_AI_CONFIG.update(original)
+
+    def test_maybe_trace_langfuse_uses_http_fallback_when_sdk_missing(self):
+        original = dict(module.QUALITY_RULE_AI_CONFIG)
+        try:
+            module.QUALITY_RULE_AI_CONFIG.update(
+                {
+                    "langfuse_secret_key": "secret",
+                    "langfuse_public_key": "public",
+                    "langfuse_base_url": "https://langfuse.kuainiu.io",
+                }
+            )
+            with mock.patch.object(module, "trace_langfuse_via_http", return_value=True) as mocked_http:
+                with mock.patch.dict(sys.modules, {"langfuse": None}):
+                    ok = module.maybe_trace_langfuse([{"role": "user", "content": "x"}], "resp", {"a": 1})
+            self.assertTrue(ok)
+            mocked_http.assert_called_once()
+        finally:
+            module.QUALITY_RULE_AI_CONFIG.clear()
+            module.QUALITY_RULE_AI_CONFIG.update(original)

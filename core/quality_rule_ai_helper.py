@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
+import urllib.error
+import urllib.request
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from config.config import QUALITY_RULE_AI_CONFIG
@@ -153,7 +158,7 @@ def maybe_trace_langfuse(messages, response_text, parsed_output):
     try:
         from langfuse import Langfuse
     except Exception:
-        return False
+        return trace_langfuse_via_http(messages, response_text, parsed_output)
     try:
         client = Langfuse(
             secret_key=secret_key,
@@ -171,7 +176,99 @@ def maybe_trace_langfuse(messages, response_text, parsed_output):
         client.flush()
         return True
     except Exception:
+        return trace_langfuse_via_http(messages, response_text, parsed_output)
+
+
+def trace_langfuse_via_http(messages, response_text, parsed_output):
+    secret_key = QUALITY_RULE_AI_CONFIG.get("langfuse_secret_key")
+    public_key = QUALITY_RULE_AI_CONFIG.get("langfuse_public_key")
+    host = (QUALITY_RULE_AI_CONFIG.get("langfuse_base_url") or "").rstrip("/")
+    if not secret_key or not public_key or not host:
         return False
+
+    trace_id = uuid.uuid4().hex
+    generation_id = uuid.uuid4().hex
+    now = datetime.now(timezone.utc).isoformat()
+    basic = base64.b64encode(f"{public_key}:{secret_key}".encode("utf-8")).decode("ascii")
+    batch = {
+        "batch": [
+            {
+                "id": uuid.uuid4().hex,
+                "timestamp": now,
+                "type": "trace-create",
+                "body": {
+                    "id": trace_id,
+                    "name": "quality_rule_ai_fallback",
+                    "input": messages,
+                    "output": parsed_output,
+                },
+            },
+            {
+                "id": uuid.uuid4().hex,
+                "timestamp": now,
+                "type": "generation-create",
+                "body": {
+                    "id": generation_id,
+                    "traceId": trace_id,
+                    "name": "generate_quality_rule_candidate",
+                    "model": QUALITY_RULE_AI_CONFIG.get("model"),
+                    "input": messages,
+                    "output": response_text,
+                    "metadata": {"parsed_output": parsed_output},
+                },
+            },
+        ]
+    }
+    req = urllib.request.Request(
+        f"{host}/api/public/ingestion",
+        data=json.dumps(batch, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Basic {basic}",
+            "Content-Type": "application/json",
+            "User-Agent": "PH-Quality-Rule-AI/1.0",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.getcode() in (200, 201, 202, 207)
+    except Exception:
+        return False
+
+
+def request_openai_compatible_completion(messages):
+    payload = {
+        "model": QUALITY_RULE_AI_CONFIG.get("model"),
+        "messages": messages,
+    }
+    base_url = (QUALITY_RULE_AI_CONFIG.get("base_url") or "").rstrip("/")
+    api_key = QUALITY_RULE_AI_CONFIG.get("api_key")
+    if not base_url or not api_key:
+        raise ValueError("missing base_url or api_key")
+
+    req = urllib.request.Request(
+        f"{base_url}/chat/completions",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "PH-Quality-Rule-AI/1.0",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"HTTP {exc.code}: {detail}") from exc
+
+    parsed = json.loads(body)
+    choices = parsed.get("choices") or []
+    if not choices:
+        return ""
+    message = choices[0].get("message") or {}
+    return message.get("content") or ""
 
 
 def source_field_is_verified(field_name, table, git_context):
@@ -240,13 +337,6 @@ def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_ro
         meta["status"] = "ai_not_available"
         meta["reason"] = "AI 或 Langfuse 配置不完整"
         return (None, meta) if return_meta else None
-    try:
-        from openai import OpenAI
-    except Exception as exc:
-        meta["status"] = "openai_import_failed"
-        meta["reason"] = str(exc)
-        return (None, meta) if return_meta else None
-
     git_context = collect_git_context(
         table.get("dest_tbl") or table.get("tbl") or "",
         src_tbl=table.get("src_tbl"),
@@ -257,15 +347,20 @@ def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_ro
     meta["attempted"] = True
     meta["status"] = "requested"
     try:
-        client = OpenAI(
-            api_key=QUALITY_RULE_AI_CONFIG.get("api_key"),
-            base_url=QUALITY_RULE_AI_CONFIG.get("base_url"),
-        )
-        completion = client.chat.completions.create(
-            model=QUALITY_RULE_AI_CONFIG.get("model"),
-            messages=messages,
-        )
-        response_text = completion.choices[0].message.content if completion.choices else ""
+        try:
+            from openai import OpenAI
+
+            client = OpenAI(
+                api_key=QUALITY_RULE_AI_CONFIG.get("api_key"),
+                base_url=QUALITY_RULE_AI_CONFIG.get("base_url"),
+            )
+            completion = client.chat.completions.create(
+                model=QUALITY_RULE_AI_CONFIG.get("model"),
+                messages=messages,
+            )
+            response_text = completion.choices[0].message.content if completion.choices else ""
+        except Exception:
+            response_text = request_openai_compatible_completion(messages)
     except Exception as exc:
         meta["status"] = "ai_request_failed"
         meta["reason"] = str(exc)
