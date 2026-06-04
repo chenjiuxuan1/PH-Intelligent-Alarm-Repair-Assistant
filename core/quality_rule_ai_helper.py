@@ -5,6 +5,8 @@ import base64
 import json
 import os
 import re
+import sys
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -15,6 +17,16 @@ from config.config import QUALITY_RULE_AI_CONFIG
 
 
 CODE_FILE_SUFFIXES = (".sql", ".py", ".scala", ".sh", ".yaml", ".yml", ".json")
+
+
+def _ai_debug_enabled():
+    return os.environ.get("QUALITY_RULE_AI_DEBUG", "0") == "1"
+
+
+def _ai_debug(message):
+    if not _ai_debug_enabled():
+        return
+    print(f"[quality-rule-ai] {message}", file=sys.stderr, flush=True)
 
 
 def default_git_scan_roots():
@@ -37,15 +49,26 @@ def default_git_scan_roots():
 
 
 def ai_fallback_available():
-    return bool(
-        QUALITY_RULE_AI_CONFIG.get("enabled")
-        and QUALITY_RULE_AI_CONFIG.get("api_key")
-        and QUALITY_RULE_AI_CONFIG.get("base_url")
-        and QUALITY_RULE_AI_CONFIG.get("model")
-        and QUALITY_RULE_AI_CONFIG.get("langfuse_secret_key")
-        and QUALITY_RULE_AI_CONFIG.get("langfuse_public_key")
-        and QUALITY_RULE_AI_CONFIG.get("langfuse_base_url")
-    )
+    return not ai_fallback_missing_keys()
+
+
+def ai_fallback_missing_keys():
+    missing = []
+    if not QUALITY_RULE_AI_CONFIG.get("enabled"):
+        missing.append("enabled")
+    if not QUALITY_RULE_AI_CONFIG.get("api_key"):
+        missing.append("api_key")
+    if not QUALITY_RULE_AI_CONFIG.get("base_url"):
+        missing.append("base_url")
+    if not QUALITY_RULE_AI_CONFIG.get("model"):
+        missing.append("model")
+    if not QUALITY_RULE_AI_CONFIG.get("langfuse_secret_key"):
+        missing.append("langfuse_secret_key")
+    if not QUALITY_RULE_AI_CONFIG.get("langfuse_public_key"):
+        missing.append("langfuse_public_key")
+    if not QUALITY_RULE_AI_CONFIG.get("langfuse_base_url"):
+        missing.append("langfuse_base_url")
+    return missing
 
 
 def iter_git_candidate_files(git_roots, table_names):
@@ -145,6 +168,7 @@ def collect_git_context(dest_tbl, src_tbl=None, git_roots=None, limit=1, preferr
             continue
         snippet = extract_relevant_git_snippet(text, snippet_keywords)
         snippets.append({"path": str(path), "snippet": snippet})
+        _ai_debug(f"selected git context file: {path}")
         if len(snippets) >= limit:
             break
     return snippets
@@ -296,10 +320,13 @@ def request_openai_compatible_completion_via_sdk(messages):
         raise ValueError("missing base_url or api_key")
 
     client = OpenAI(api_key=api_key, base_url=base_url, timeout=20, max_retries=0)
+    started_at = time.time()
+    _ai_debug("calling DashScope via OpenAI SDK")
     completion = client.chat.completions.create(
         model=QUALITY_RULE_AI_CONFIG.get("model"),
         messages=messages,
     )
+    _ai_debug(f"DashScope SDK returned in {time.time() - started_at:.2f}s")
     choice = (completion.choices or [None])[0]
     message = getattr(choice, "message", None)
     if message is None and isinstance(choice, dict):
@@ -331,6 +358,8 @@ def request_openai_compatible_completion_via_http(messages):
         },
         method="POST",
     )
+    started_at = time.time()
+    _ai_debug("calling DashScope via HTTP fallback")
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
             body = resp.read().decode("utf-8", errors="replace")
@@ -338,6 +367,7 @@ def request_openai_compatible_completion_via_http(messages):
         detail = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"HTTP {exc.code}: {detail}") from exc
 
+    _ai_debug(f"DashScope HTTP returned in {time.time() - started_at:.2f}s")
     parsed = json.loads(body)
     choices = parsed.get("choices") or []
     if not choices:
@@ -418,10 +448,17 @@ def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_ro
         "reason": "",
         "git_matches": [],
     }
-    if not ai_fallback_available():
+    missing_keys = ai_fallback_missing_keys()
+    if missing_keys:
         meta["status"] = "ai_not_available"
-        meta["reason"] = "AI 或 Langfuse 配置不完整"
+        meta["reason"] = f"AI 或 Langfuse 配置不完整: {', '.join(missing_keys)}"
+        _ai_debug(f"ai fallback unavailable, missing keys: {', '.join(missing_keys)}")
         return (None, meta) if return_meta else None
+    _ai_debug(
+        "ai fallback start "
+        f"database={database_name} dest_tbl={table.get('dest_tbl') or table.get('tbl')} "
+        f"src_tbl={table.get('src_tbl') or ''}"
+    )
     git_context = collect_git_context(
         table.get("dest_tbl") or table.get("tbl") or "",
         src_tbl=table.get("src_tbl"),
@@ -429,6 +466,7 @@ def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_ro
         preferred_paths=table.get("git_matches") or [],
     )
     meta["git_matches"] = [item["path"] for item in git_context]
+    _ai_debug(f"git context count={len(git_context)}")
     messages = build_ai_messages(database_name, table, git_context, failure_reason)
     meta["attempted"] = True
     meta["status"] = "requested"
@@ -437,6 +475,7 @@ def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_ro
     except Exception as exc:
         meta["status"] = "ai_request_failed"
         meta["reason"] = str(exc)
+        _ai_debug(f"ai request failed: {exc}")
         try:
             maybe_trace_langfuse(messages, "", {"status": "ai_request_failed", "reason": str(exc)})
         except Exception:
@@ -447,6 +486,7 @@ def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_ro
     except Exception as exc:
         meta["status"] = "ai_response_parse_failed"
         meta["reason"] = str(exc)
+        _ai_debug(f"ai response parse failed: {exc}")
         return (None, meta) if return_meta else None
     draft_candidate = build_candidate_from_parsed_output(table, parsed, git_context)
     meta["draft_candidate"] = draft_candidate
@@ -454,10 +494,14 @@ def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_ro
     meta["trace_status"] = "ok" if traced else "langfuse_trace_failed"
     if not traced:
         meta["trace_reason"] = "Langfuse trace 未成功写入"
+        _ai_debug("langfuse trace failed")
+    else:
+        _ai_debug("langfuse trace ok")
 
     if not source_field_is_verified(parsed.get("src_check_field"), table, git_context):
         meta["status"] = "ai_output_unverified_source_field"
         meta["reason"] = f"AI 生成的源字段未验证: {parsed.get('src_check_field', '')}"
+        _ai_debug(meta["reason"])
         return (None, meta) if return_meta else None
 
     if not count_rule_fields_are_consistent(parsed):
@@ -465,6 +509,7 @@ def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_ro
         meta["reason"] = (
             f"AI 生成的字段不一致: {parsed.get('src_check_field', '')} != {parsed.get('dest_check_field', '')}"
         )
+        _ai_debug(meta["reason"])
         return (None, meta) if return_meta else None
 
     required_keys = ["src_db", "src_tbl", "src_sql", "dest_sql"]
@@ -472,9 +517,11 @@ def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_ro
         missing = [key for key in required_keys if not parsed.get(key)]
         meta["status"] = "ai_output_missing_keys"
         meta["reason"] = f"AI 返回缺少字段: {', '.join(missing)}"
+        _ai_debug(meta["reason"])
         return (None, meta) if return_meta else None
 
     candidate = draft_candidate
     meta["status"] = "ok"
     meta["reason"] = parsed.get("reason", "")
+    _ai_debug("ai fallback success")
     return (candidate, meta) if return_meta else candidate
