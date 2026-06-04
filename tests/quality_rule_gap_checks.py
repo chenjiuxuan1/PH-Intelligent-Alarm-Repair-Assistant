@@ -157,6 +157,31 @@ class QualityRuleGapScannerTests(unittest.TestCase):
         self.assertIn("WHERE created_at >=", result["candidate"]["src_sql"])
         self.assertIn("WHERE etl_create_time >=", result["candidate"]["dest_sql"])
 
+    def test_build_count_rule_candidate_does_not_accept_cross_table_generic_source_etl_field(self):
+        module = load_module()
+        table = {
+            "id": 1,
+            "db": "dwd",
+            "tbl": "dwd_asset_tc_vprod_order",
+            "dep_tbls": json.dumps(["ods_r2_tc_vprod_order"]),
+            "increment_field": "etl_create_time",
+            "check_field": "",
+        }
+        ods_table_by_dest = {
+            "ods_r2_tc_vprod_order": {
+                "dest_tbl": "ods_r2_tc_vprod_order",
+                "check_field": "etl_create_time",
+                "columns": json.dumps(["id", "order_no", "etl_create_time"]),
+                "src_tbl": "r2_tc_vprod_order",
+            }
+        }
+
+        with mock.patch.object(module, "generate_rule_candidate_with_ai", return_value=None):
+            result = module.build_count_rule_candidate("dwd", table, {}, ods_table_by_dest)
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["reason"], "无法推断 src_check_field/dest_check_field")
+
     def test_infer_source_check_field_prefers_git_hint_before_target_increment_field(self):
         module = load_module()
         table = {

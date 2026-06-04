@@ -311,6 +311,25 @@ def infer_target_check_field(table, git_roots=None):
     return git_hints.get("check_field")
 
 
+def source_field_looks_unreliable_for_count_rule(table, src_check_field):
+    if not src_check_field:
+        return True
+    field = str(src_check_field).lower()
+    if not field.startswith("etl_"):
+        return False
+
+    src_db = (table.get("src_db") or "").lower()
+    dest_db = (table.get("dest_db") or table.get("db") or "").lower()
+    src_tbl = (table.get("src_tbl") or "").lower()
+    dest_tbl = (table.get("dest_tbl") or table.get("tbl") or "").lower()
+
+    # For cross-table/cross-layer count checks, a generic etl_* field on the
+    # source side is too easy to "succeed" with the wrong lineage semantics.
+    # We would rather fall back to AI/manual review than keep generating the
+    # same obviously suspicious SQL.
+    return src_db != dest_db or src_tbl != dest_tbl
+
+
 def build_sql_statements(src_db, src_table, target_db, target_table, src_check_field, dest_check_field, table):
     if src_check_field is None and dest_check_field is None:
         src_sql = f"SELECT COUNT(*) as cnt FROM {src_db}.{src_table}"
@@ -453,6 +472,8 @@ def build_count_rule_candidate(database_name, table, rule_map, ods_table_by_dest
     if database_name != "dim":
         src_check_field = infer_source_check_field(working_table, git_roots=git_roots)
         dest_check_field = infer_target_check_field(working_table, git_roots=git_roots)
+        if source_field_looks_unreliable_for_count_rule(working_table, src_check_field):
+            src_check_field = None
         if not src_check_field or not dest_check_field:
             ai_candidate = generate_rule_candidate_with_ai(
                 database_name,
