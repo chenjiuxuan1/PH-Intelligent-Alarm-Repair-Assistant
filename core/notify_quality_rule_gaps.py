@@ -27,6 +27,7 @@ def parse_args():
     parser.add_argument("--monitor-level", type=int, default=None)
     parser.add_argument("--git-roots", nargs="*", default=None)
     parser.add_argument("--dry-run-form", action="store_true")
+    parser.add_argument("--force-form-resubmit", action="store_true")
     parser.add_argument("--json", action="store_true")
     return parser.parse_args()
 
@@ -43,7 +44,10 @@ def main():
     detected_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     backlog, new_items = merge_candidates_into_backlog(results, backlog=backlog, detected_at=detected_at)
 
-    form_submission_items = get_pending_form_submission_items(backlog)
+    form_submission_items = get_pending_form_submission_items(
+        backlog,
+        include_submitted=args.force_form_resubmit,
+    )
     form_result = submit_backlog_items_to_form(form_submission_items, dry_run=args.dry_run_form)
     if not form_result.get("skipped"):
         success_keys = {
@@ -67,6 +71,7 @@ def main():
     payload = {
         "new_candidates": len(new_items),
         "pending_form_candidates": len(form_submission_items),
+        "force_form_resubmit": args.force_form_resubmit,
         "form_result": form_result,
         "tv_result": tv_result,
     }

@@ -107,12 +107,13 @@ def merge_candidates_into_backlog(results, backlog=None, detected_at=None):
     return backlog, new_items
 
 
-def get_pending_form_submission_items(backlog):
+def get_pending_form_submission_items(backlog, include_submitted=False):
     items = backlog.get("items", {}).values()
     pending_items = [
         item
         for item in items
-        if item.get("status") == "pending_confirmation" and not item.get("form_submitted_at")
+        if item.get("status") == "pending_confirmation"
+        and (include_submitted or not item.get("form_submitted_at"))
     ]
     pending_items.sort(key=lambda item: (item.get("detected_at", ""), item.get("candidate_key", "")))
     return pending_items
