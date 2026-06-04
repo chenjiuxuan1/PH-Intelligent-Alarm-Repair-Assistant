@@ -1,6 +1,7 @@
 import sys
 import types
 import unittest
+from datetime import datetime
 from unittest import mock
 
 from core import quality_rule_ai_helper as module
@@ -218,3 +219,19 @@ class QualityRuleAiHelperTests(unittest.TestCase):
         finally:
             module.QUALITY_RULE_AI_CONFIG.clear()
             module.QUALITY_RULE_AI_CONFIG.update(original)
+
+    def test_build_ai_messages_normalizes_datetime_values(self):
+        messages = module.build_ai_messages(
+            "dwd",
+            {
+                "tbl": "dwd_x",
+                "dest_tbl": "dwd_x",
+                "updated_at": datetime(2026, 6, 4, 18, 30, 0),
+            },
+            [{"path": "/tmp/job.sql", "snippet": "select 1", "seen_at": datetime(2026, 6, 4, 18, 31, 0)}],
+            "missing fields",
+        )
+
+        self.assertEqual(messages[0]["role"], "system")
+        self.assertIn('"updated_at": "2026-06-04T18:30:00"', messages[1]["content"])
+        self.assertIn('"seen_at": "2026-06-04T18:31:00"', messages[1]["content"])

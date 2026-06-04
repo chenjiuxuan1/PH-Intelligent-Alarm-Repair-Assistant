@@ -8,7 +8,7 @@ import re
 import urllib.error
 import urllib.request
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from config.config import QUALITY_RULE_AI_CONFIG
@@ -95,6 +95,16 @@ def collect_git_context(dest_tbl, src_tbl=None, git_roots=None, limit=3):
     return snippets
 
 
+def normalize_for_json(value):
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): normalize_for_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [normalize_for_json(item) for item in value]
+    return value
+
+
 def build_ai_messages(database_name, table, git_context, failure_reason):
     system_prompt = (
         "你是一个数仓数据质量规则生成助手。"
@@ -103,9 +113,9 @@ def build_ai_messages(database_name, table, git_context, failure_reason):
     )
     payload = {
         "database": database_name,
-        "table": table,
+        "table": normalize_for_json(table),
         "failure_reason": failure_reason,
-        "git_context": git_context,
+        "git_context": normalize_for_json(git_context),
         "output_schema": {
             "src_db": "string",
             "src_tbl": "string",
