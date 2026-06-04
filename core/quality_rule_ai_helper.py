@@ -5,6 +5,7 @@ import base64
 import json
 import os
 import re
+import signal
 import sys
 import time
 import urllib.error
@@ -27,6 +28,37 @@ def _ai_debug(message):
     if not _ai_debug_enabled():
         return
     print(f"[quality-rule-ai] {message}", file=sys.stderr, flush=True)
+
+
+class AiRequestTimeoutError(TimeoutError):
+    pass
+
+
+def _ai_deadline_seconds():
+    raw = os.environ.get("QUALITY_RULE_AI_DEADLINE_SECONDS", "25")
+    try:
+        return max(1, int(raw))
+    except Exception:
+        return 25
+
+
+def _run_with_deadline(fn, *args, **kwargs):
+    if not hasattr(signal, "SIGALRM"):
+        return fn(*args, **kwargs)
+
+    seconds = _ai_deadline_seconds()
+
+    def _handle_timeout(signum, frame):
+        raise AiRequestTimeoutError(f"ai request exceeded {seconds}s deadline")
+
+    previous = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, _handle_timeout)
+    signal.alarm(seconds)
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
 
 
 def default_git_scan_roots():
@@ -471,7 +503,16 @@ def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_ro
     meta["attempted"] = True
     meta["status"] = "requested"
     try:
-        response_text = request_openai_compatible_completion(messages)
+        response_text = _run_with_deadline(request_openai_compatible_completion, messages)
+    except AiRequestTimeoutError as exc:
+        meta["status"] = "ai_request_timeout"
+        meta["reason"] = str(exc)
+        _ai_debug(f"ai request timeout: {exc}")
+        try:
+            maybe_trace_langfuse(messages, "", {"status": "ai_request_timeout", "reason": str(exc)})
+        except Exception:
+            pass
+        return (None, meta) if return_meta else None
     except Exception as exc:
         meta["status"] = "ai_request_failed"
         meta["reason"] = str(exc)
