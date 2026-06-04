@@ -154,6 +154,36 @@ class QualityRuleConfirmationTests(unittest.TestCase):
         self.assertEqual(backlog["items"][key]["reason"], "新的候选 SQL")
         self.assertEqual(backlog["items"][key]["form_submitted_at"], "2026-06-04 12:05:00")
 
+    def test_merge_candidates_into_backlog_marks_stale_pending_item_blocked_when_rescan_blocks(self):
+        module, _ = load_module()
+        candidate = self.make_candidate_result()
+        backlog, new_items = module.merge_candidates_into_backlog(
+            [candidate],
+            backlog={"items": {}},
+            detected_at="2026-06-04 12:00:00",
+        )
+        key = new_items[0]["candidate_key"]
+
+        blocked = {
+            "status": "blocked",
+            "database": "dwd",
+            "rule_name": "cnt",
+            "dest_tbl": "dwd_user_member_log",
+            "dest_db": "dwd",
+            "reason": "AI 与规则推断都失败",
+        }
+
+        backlog, second_new_items = module.merge_candidates_into_backlog(
+            [blocked],
+            backlog=backlog,
+            detected_at="2026-06-04 12:10:00",
+        )
+
+        self.assertEqual(second_new_items, [])
+        self.assertEqual(backlog["items"][key]["status"], "blocked")
+        self.assertEqual(backlog["items"][key]["reason"], "AI 与规则推断都失败")
+        self.assertEqual(backlog["items"][key]["rescan_at"], "2026-06-04 12:10:00")
+
     def test_format_tv_confirmation_message_includes_sheet_url_and_candidate_key(self):
         module, _ = load_module()
         backlog_item = module.candidate_to_backlog_item(self.make_candidate_result(), detected_at="2026-06-04 12:00:00")

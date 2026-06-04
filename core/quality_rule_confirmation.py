@@ -97,10 +97,16 @@ def merge_candidates_into_backlog(results, backlog=None, detected_at=None):
     items = backlog.setdefault("items", {})
     new_items = []
     for item in results:
+        key = build_candidate_key(item)
         if item.get("status") != "candidate":
+            existing = items.get(key)
+            if existing and existing.get("status") == "pending_confirmation":
+                existing["status"] = item.get("status")
+                existing["reason"] = item.get("reason", existing.get("reason", ""))
+                existing["rescan_at"] = detected_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             continue
+
         backlog_item = candidate_to_backlog_item(item, detected_at=detected_at)
-        key = backlog_item["candidate_key"]
         if key not in items:
             items[key] = backlog_item
             new_items.append(backlog_item)
