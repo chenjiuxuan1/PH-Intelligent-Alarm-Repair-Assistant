@@ -35,11 +35,29 @@ class AiRequestTimeoutError(TimeoutError):
 
 
 def _ai_deadline_seconds():
-    raw = os.environ.get("QUALITY_RULE_AI_DEADLINE_SECONDS", "25")
+    raw = os.environ.get("QUALITY_RULE_AI_DEADLINE_SECONDS", "")
+    if raw in ("", None):
+        return None
     try:
-        return max(1, int(raw))
+        value = int(raw)
+        if value <= 0:
+            return None
+        return value
     except Exception:
-        return 25
+        return None
+
+
+def _optional_timeout_seconds(env_name):
+    raw = os.environ.get(env_name, "")
+    if raw in ("", None):
+        return None
+    try:
+        value = float(raw)
+        if value <= 0:
+            return None
+        return value
+    except Exception:
+        return None
 
 
 def _run_with_deadline(fn, *args, **kwargs):
@@ -47,6 +65,8 @@ def _run_with_deadline(fn, *args, **kwargs):
         return fn(*args, **kwargs)
 
     seconds = _ai_deadline_seconds()
+    if not seconds:
+        return fn(*args, **kwargs)
 
     def _handle_timeout(signum, frame):
         raise AiRequestTimeoutError(f"ai request exceeded {seconds}s deadline")
@@ -334,7 +354,12 @@ def trace_langfuse_via_http(messages, response_text, parsed_output):
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        timeout_seconds = _optional_timeout_seconds("QUALITY_RULE_LANGFUSE_TIMEOUT_SECONDS")
+        if timeout_seconds:
+            resp_ctx = urllib.request.urlopen(req, timeout=timeout_seconds)
+        else:
+            resp_ctx = urllib.request.urlopen(req)
+        with resp_ctx as resp:
             return resp.getcode() in (200, 201, 202, 207)
     except Exception:
         return False
@@ -351,7 +376,15 @@ def request_openai_compatible_completion_via_sdk(messages):
     if not base_url or not api_key:
         raise ValueError("missing base_url or api_key")
 
-    client = OpenAI(api_key=api_key, base_url=base_url, timeout=20, max_retries=0)
+    client_kwargs = {
+        "api_key": api_key,
+        "base_url": base_url,
+        "max_retries": 0,
+    }
+    timeout_seconds = _optional_timeout_seconds("QUALITY_RULE_AI_SDK_TIMEOUT_SECONDS")
+    if timeout_seconds:
+        client_kwargs["timeout"] = timeout_seconds
+    client = OpenAI(**client_kwargs)
     started_at = time.time()
     _ai_debug("calling DashScope via OpenAI SDK")
     completion = client.chat.completions.create(
@@ -393,7 +426,12 @@ def request_openai_compatible_completion_via_http(messages):
     started_at = time.time()
     _ai_debug("calling DashScope via HTTP fallback")
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        timeout_seconds = _optional_timeout_seconds("QUALITY_RULE_AI_HTTP_TIMEOUT_SECONDS")
+        if timeout_seconds:
+            resp_ctx = urllib.request.urlopen(req, timeout=timeout_seconds)
+        else:
+            resp_ctx = urllib.request.urlopen(req)
+        with resp_ctx as resp:
             body = resp.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")

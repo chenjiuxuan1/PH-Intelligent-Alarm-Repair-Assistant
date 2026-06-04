@@ -8,6 +8,13 @@ from core import quality_rule_ai_helper as module
 
 
 class QualityRuleAiHelperTests(unittest.TestCase):
+    def test_deadline_and_timeouts_default_to_disabled(self):
+        with mock.patch.dict(module.os.environ, {}, clear=False):
+            self.assertIsNone(module._ai_deadline_seconds())
+            self.assertIsNone(module._optional_timeout_seconds("QUALITY_RULE_AI_SDK_TIMEOUT_SECONDS"))
+            self.assertIsNone(module._optional_timeout_seconds("QUALITY_RULE_AI_HTTP_TIMEOUT_SECONDS"))
+            self.assertIsNone(module._optional_timeout_seconds("QUALITY_RULE_LANGFUSE_TIMEOUT_SECONDS"))
+
     def test_ai_fallback_available_requires_langfuse_config(self):
         original = dict(module.QUALITY_RULE_AI_CONFIG)
         try:
