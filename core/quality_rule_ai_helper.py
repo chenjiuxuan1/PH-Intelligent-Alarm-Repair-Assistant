@@ -250,7 +250,7 @@ def request_openai_compatible_completion_via_sdk(messages):
     if not base_url or not api_key:
         raise ValueError("missing base_url or api_key")
 
-    client = OpenAI(api_key=api_key, base_url=base_url, timeout=20)
+    client = OpenAI(api_key=api_key, base_url=base_url, timeout=20, max_retries=0)
     completion = client.chat.completions.create(
         model=QUALITY_RULE_AI_CONFIG.get("model"),
         messages=messages,
