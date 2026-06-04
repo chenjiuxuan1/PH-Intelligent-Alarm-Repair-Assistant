@@ -245,7 +245,7 @@ class QualityRuleConfirmationTests(unittest.TestCase):
 
         self.assertEqual([item["candidate_key"] for item in pending_items], [pending_item["candidate_key"]])
 
-    def test_get_pending_form_submission_items_skips_blocked_pending_items(self):
+    def test_get_pending_form_submission_items_keeps_blocked_items_when_sql_present(self):
         module, _ = load_module()
         blocked_item = module.candidate_to_backlog_item(self.make_candidate_result(), detected_at="2026-06-04 12:00:00")
         blocked_item["candidate_key"] = "dwd::dwd.blocked_table::cnt"
@@ -254,7 +254,7 @@ class QualityRuleConfirmationTests(unittest.TestCase):
 
         pending_items = module.get_pending_form_submission_items(backlog, include_submitted=True)
 
-        self.assertEqual(pending_items, [])
+        self.assertEqual([row["candidate_key"] for row in pending_items], [blocked_item["candidate_key"]])
 
     def test_get_pending_form_submission_items_skips_count_items_without_sql(self):
         module, _ = load_module()

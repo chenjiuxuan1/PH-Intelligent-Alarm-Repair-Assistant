@@ -494,20 +494,13 @@ def build_count_rule_candidate(database_name, table, rule_map, ods_table_by_dest
                     "candidate": ai_candidate,
                     "ai_status": ai_meta.get("status", ""),
                 }
-            return {
-                "status": "blocked",
-                "rule_name": COUNT_RULE_NAME,
-                "dest_tbl": target_table,
-                "dest_db": table.get("db"),
-                "src_db": table.get("src_db", ""),
-                "src_tbl": table.get("src_tbl", ""),
-                "src_sql": "",
-                "dest_sql": "",
-                "check_field": "",
-                "git_matches": table.get("git_matches", []) or ai_meta.get("git_matches", []),
-                "reason": f"{enrich_error}; AI状态={ai_meta.get('status', 'not_called')} {ai_meta.get('reason', '')}".strip(),
-                "ai_status": ai_meta.get("status", ""),
-            }
+            return blocked_result_with_ai_draft(
+                table,
+                target_table,
+                table.get("db"),
+                ai_meta,
+                enrich_error,
+            )
 
     if database_name != "dim":
         src_check_field = infer_source_check_field(working_table, git_roots=git_roots)
@@ -531,20 +524,14 @@ def build_count_rule_candidate(database_name, table, rule_map, ods_table_by_dest
                     "candidate": ai_candidate,
                     "ai_status": ai_meta.get("status", ""),
                 }
-            return {
-                "status": "blocked",
-                "rule_name": COUNT_RULE_NAME,
-                "dest_tbl": target_table,
-                "dest_db": working_table.get("dest_db") or working_table.get("db"),
-                "src_db": working_table.get("src_db", ""),
-                "src_tbl": working_table.get("src_tbl", ""),
-                "src_sql": "",
-                "dest_sql": "",
-                "check_field": dest_check_field or "",
-                "git_matches": working_table.get("git_matches", []) or ai_meta.get("git_matches", []),
-                "reason": f"src_check_field/dest_check_field 不一致: {src_check_field} != {dest_check_field}; AI状态={ai_meta.get('status', 'not_called')} {ai_meta.get('reason', '')}".strip(),
-                "ai_status": ai_meta.get("status", ""),
-            }
+            return blocked_result_with_ai_draft(
+                working_table,
+                target_table,
+                working_table.get("dest_db") or working_table.get("db"),
+                ai_meta,
+                f"src_check_field/dest_check_field 不一致: {src_check_field} != {dest_check_field}",
+                fallback={"check_field": dest_check_field or ""},
+            )
         if not src_check_field or not dest_check_field:
             ai_candidate, ai_meta = call_ai_candidate(
                 database_name,
@@ -562,20 +549,14 @@ def build_count_rule_candidate(database_name, table, rule_map, ods_table_by_dest
                     "candidate": ai_candidate,
                     "ai_status": ai_meta.get("status", ""),
                 }
-            return {
-                "status": "blocked",
-                "rule_name": COUNT_RULE_NAME,
-                "dest_tbl": target_table,
-                "dest_db": working_table.get("dest_db") or working_table.get("db"),
-                "src_db": working_table.get("src_db", ""),
-                "src_tbl": working_table.get("src_tbl", ""),
-                "src_sql": "",
-                "dest_sql": "",
-                "check_field": dest_check_field or "",
-                "git_matches": working_table.get("git_matches", []) or ai_meta.get("git_matches", []),
-                "reason": f"无法推断 src_check_field/dest_check_field; AI状态={ai_meta.get('status', 'not_called')} {ai_meta.get('reason', '')}".strip(),
-                "ai_status": ai_meta.get("status", ""),
-            }
+            return blocked_result_with_ai_draft(
+                working_table,
+                target_table,
+                working_table.get("dest_db") or working_table.get("db"),
+                ai_meta,
+                "无法推断 src_check_field/dest_check_field",
+                fallback={"check_field": dest_check_field or ""},
+            )
     else:
         src_check_field = None
         dest_check_field = None
@@ -599,20 +580,13 @@ def build_count_rule_candidate(database_name, table, rule_map, ods_table_by_dest
                     "candidate": ai_candidate,
                     "ai_status": ai_meta.get("status", ""),
                 }
-        return {
-            "status": "blocked",
-            "rule_name": COUNT_RULE_NAME,
-            "dest_tbl": target_table,
-            "dest_db": working_table.get("dest_db") or working_table.get("db"),
-            "src_db": working_table.get("src_db", ""),
-            "src_tbl": working_table.get("src_tbl", ""),
-            "src_sql": "",
-            "dest_sql": "",
-            "check_field": "",
-            "git_matches": working_table.get("git_matches", []) or ai_meta.get("git_matches", []),
-            "reason": f"无法获取 src_db; AI状态={ai_meta.get('status', 'not_called')} {ai_meta.get('reason', '')}".strip(),
-            "ai_status": ai_meta.get("status", ""),
-        }
+        return blocked_result_with_ai_draft(
+            working_table,
+            target_table,
+            working_table.get("dest_db") or working_table.get("db"),
+            ai_meta,
+            "无法获取 src_db",
+        )
 
     target_db = working_table.get("dest_db") or working_table.get("db")
     src_sql, dest_sql = build_sql_statements(
@@ -641,20 +615,14 @@ def build_count_rule_candidate(database_name, table, rule_map, ods_table_by_dest
                     "candidate": ai_candidate,
                     "ai_status": ai_meta.get("status", ""),
                 }
-        return {
-            "status": "blocked",
-            "rule_name": COUNT_RULE_NAME,
-            "dest_tbl": target_table,
-            "dest_db": target_db,
-            "src_db": src_db,
-            "src_tbl": src_table,
-            "src_sql": "",
-            "dest_sql": "",
-            "check_field": dest_check_field or "",
-            "git_matches": working_table.get("git_matches", []) or ai_meta.get("git_matches", []),
-            "reason": f"无法构造 src_sql/dest_sql; AI状态={ai_meta.get('status', 'not_called')} {ai_meta.get('reason', '')}".strip(),
-            "ai_status": ai_meta.get("status", ""),
-        }
+        return blocked_result_with_ai_draft(
+            working_table,
+            target_table,
+            target_db,
+            ai_meta,
+            "无法构造 src_sql/dest_sql",
+            fallback={"src_db": src_db, "src_tbl": src_table, "check_field": dest_check_field or ""},
+        )
 
     candidate = {
         "name": COUNT_RULE_NAME,
@@ -694,6 +662,25 @@ def call_ai_candidate(database_name, table, failure_reason, git_roots=None):
     if result:
         return result, {"status": "ok", "reason": "", "git_matches": [], "attempted": True}
     return None, {"status": "not_called", "reason": "", "git_matches": [], "attempted": False}
+
+
+def blocked_result_with_ai_draft(table, target_table, target_db, ai_meta, default_reason, fallback=None):
+    draft = ai_meta.get("draft_candidate") or {}
+    fallback = fallback or {}
+    return {
+        "status": "blocked",
+        "rule_name": COUNT_RULE_NAME,
+        "dest_tbl": target_table,
+        "dest_db": target_db,
+        "src_db": draft.get("src_db") or fallback.get("src_db", "") or table.get("src_db", ""),
+        "src_tbl": draft.get("src_tbl") or fallback.get("src_tbl", "") or table.get("src_tbl", ""),
+        "src_sql": draft.get("src_sql") or fallback.get("src_sql", ""),
+        "dest_sql": draft.get("dest_sql") or fallback.get("dest_sql", ""),
+        "check_field": draft.get("dest_check_field") or draft.get("check_field") or fallback.get("check_field", ""),
+        "git_matches": draft.get("git_matches") or fallback.get("git_matches", []) or table.get("git_matches", []) or ai_meta.get("git_matches", []),
+        "reason": f"{default_reason}; AI状态={ai_meta.get('status', 'not_called')} {ai_meta.get('reason', '')}".strip(),
+        "ai_status": ai_meta.get("status", ""),
+    }
 
 
 def build_exists_rule_candidate(database_name, table, rule_map):

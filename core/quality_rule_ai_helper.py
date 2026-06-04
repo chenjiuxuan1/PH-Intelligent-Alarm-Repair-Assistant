@@ -210,6 +210,25 @@ def count_rule_fields_are_consistent(parsed_output):
     return src_check_field.lower() == dest_check_field.lower()
 
 
+def build_candidate_from_parsed_output(table, parsed, git_context):
+    return {
+        "name": "cnt",
+        "desc": "总数",
+        "src_db": parsed.get("src_db", ""),
+        "src_tbl": parsed.get("src_tbl", ""),
+        "dest_db": table.get("dest_db") or table.get("db"),
+        "dest_tbl": table.get("dest_tbl") or table.get("tbl"),
+        "src_sql": parsed.get("src_sql", ""),
+        "dest_sql": parsed.get("dest_sql", ""),
+        "msg_template": "{dest_tbl} 数量不一致  期望值 {src_value}  实际值{dest_value}  差值为 {diff}",
+        "check_field": parsed.get("dest_check_field") or parsed.get("src_check_field"),
+        "src_check_field": parsed.get("src_check_field"),
+        "dest_check_field": parsed.get("dest_check_field"),
+        "ai_reason": parsed.get("reason", ""),
+        "git_matches": [item["path"] for item in git_context],
+    }
+
+
 def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_roots=None, return_meta=False):
     meta = {
         "attempted": False,
@@ -263,6 +282,9 @@ def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_ro
         meta["reason"] = "Langfuse trace 未成功写入"
         return (None, meta) if return_meta else None
 
+    draft_candidate = build_candidate_from_parsed_output(table, parsed, git_context)
+    meta["draft_candidate"] = draft_candidate
+
     if not source_field_is_verified(parsed.get("src_check_field"), table, git_context):
         meta["status"] = "ai_output_unverified_source_field"
         meta["reason"] = f"AI 生成的源字段未验证: {parsed.get('src_check_field', '')}"
@@ -282,22 +304,7 @@ def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_ro
         meta["reason"] = f"AI 返回缺少字段: {', '.join(missing)}"
         return (None, meta) if return_meta else None
 
-    candidate = {
-        "name": "cnt",
-        "desc": "总数",
-        "src_db": parsed.get("src_db", ""),
-        "src_tbl": parsed.get("src_tbl", ""),
-        "dest_db": table.get("dest_db") or table.get("db"),
-        "dest_tbl": table.get("dest_tbl") or table.get("tbl"),
-        "src_sql": parsed.get("src_sql", ""),
-        "dest_sql": parsed.get("dest_sql", ""),
-        "msg_template": "{dest_tbl} 数量不一致  期望值 {src_value}  实际值{dest_value}  差值为 {diff}",
-        "check_field": parsed.get("dest_check_field") or parsed.get("src_check_field"),
-        "src_check_field": parsed.get("src_check_field"),
-        "dest_check_field": parsed.get("dest_check_field"),
-        "ai_reason": parsed.get("reason", ""),
-        "git_matches": [item["path"] for item in git_context],
-    }
+    candidate = draft_candidate
     meta["status"] = "ok"
     meta["reason"] = parsed.get("reason", "")
     return (candidate, meta) if return_meta else candidate

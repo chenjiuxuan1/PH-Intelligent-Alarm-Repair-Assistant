@@ -149,12 +149,52 @@ class QualityRuleGapScannerTests(unittest.TestCase):
             }
         }
 
-        with mock.patch.object(module, "generate_rule_candidate_with_ai", return_value=None):
+        with mock.patch.object(module, "generate_rule_candidate_with_ai", return_value=(None, {"status": "not_called", "reason": "", "git_matches": []})):
             result = module.build_count_rule_candidate("dwd", table, {}, ods_table_by_dest)
 
         self.assertEqual(result["status"], "blocked")
         self.assertIn("不一致", result["reason"])
         self.assertEqual(result["src_tbl"], "ods_r2_tc_vprod_order")
+
+    def test_build_count_rule_candidate_keeps_ai_draft_sql_in_blocked_result(self):
+        module = load_module()
+        table = {
+            "id": 1,
+            "db": "dwd",
+            "tbl": "dwd_asset_tc_vprod_order",
+            "dep_tbls": json.dumps(["ods_r2_tc_vprod_order"]),
+            "increment_field": "etl_create_time",
+            "check_field": "",
+        }
+        ods_table_by_dest = {
+            "ods_r2_tc_vprod_order": {
+                "dest_tbl": "ods_r2_tc_vprod_order",
+                "check_field": "",
+                "columns": json.dumps(["id", "created_at", "order_no"]),
+                "src_tbl": "r2_tc_vprod_order",
+            }
+        }
+        ai_meta = {
+            "status": "ai_output_inconsistent_fields",
+            "reason": "AI 生成的字段不一致: create_at != etl_create_time",
+            "git_matches": ["/data/git/starrocks/workflow/ph/dwd/job.sql"],
+            "draft_candidate": {
+                "src_db": "ods",
+                "src_tbl": "ods_r2_tc_vprod_order",
+                "src_sql": "select count(*) from ods.ods_r2_tc_vprod_order where create_at >= '{begin}'",
+                "dest_sql": "select count(*) from dwd.dwd_asset_tc_vprod_order where etl_create_time >= '{begin}'",
+                "dest_check_field": "etl_create_time",
+                "git_matches": ["/data/git/starrocks/workflow/ph/dwd/job.sql"],
+            },
+        }
+
+        with mock.patch.object(module, "call_ai_candidate", return_value=(None, ai_meta)):
+            result = module.build_count_rule_candidate("dwd", table, {}, ods_table_by_dest)
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("AI状态=ai_output_inconsistent_fields", result["reason"])
+        self.assertIn("create_at", result["src_sql"])
+        self.assertIn("etl_create_time", result["dest_sql"])
 
     def test_build_count_rule_candidate_does_not_accept_cross_table_generic_source_etl_field(self):
         module = load_module()

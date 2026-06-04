@@ -103,14 +103,17 @@ class QualityRuleAiHelperTests(unittest.TestCase):
 
             with mock.patch.object(module, "maybe_trace_langfuse", return_value=True):
                 with mock.patch.dict(sys.modules, {"openai": fake_openai_module}):
-                    result = module.generate_rule_candidate_with_ai(
+                    result, meta = module.generate_rule_candidate_with_ai(
                         "dwd",
                         {"tbl": "dwd_user_member_log", "dest_tbl": "dwd_user_member_log", "columns": "[]"},
                         "missing fields",
                         git_roots=[],
+                        return_meta=True,
                     )
 
             self.assertIsNone(result)
+            self.assertEqual(meta["status"], "ai_output_unverified_source_field")
+            self.assertTrue(meta.get("draft_candidate"))
         finally:
             module.QUALITY_RULE_AI_CONFIG.clear()
             module.QUALITY_RULE_AI_CONFIG.update(original)
@@ -146,14 +149,17 @@ class QualityRuleAiHelperTests(unittest.TestCase):
 
             with mock.patch.object(module, "maybe_trace_langfuse", return_value=True):
                 with mock.patch.dict(sys.modules, {"openai": fake_openai_module}):
-                    result = module.generate_rule_candidate_with_ai(
+                    result, meta = module.generate_rule_candidate_with_ai(
                         "dwd",
                         {"tbl": "dwd_user_member_log", "dest_tbl": "dwd_user_member_log", "columns": '["create_at"]'},
                         "inconsistent fields",
                         git_roots=[],
+                        return_meta=True,
                     )
 
             self.assertIsNone(result)
+            self.assertEqual(meta["status"], "ai_output_inconsistent_fields")
+            self.assertTrue(meta.get("draft_candidate"))
         finally:
             module.QUALITY_RULE_AI_CONFIG.clear()
             module.QUALITY_RULE_AI_CONFIG.update(original)

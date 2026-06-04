@@ -191,8 +191,6 @@ def get_pending_form_submission_items(backlog, include_submitted=False):
     for item in items:
         if item.get("status") != "pending_confirmation":
             continue
-        if item.get("scan_status") != "candidate":
-            continue
         if not backlog_item_has_submittable_sql(item):
             continue
         if not item.get("form_submitted_at"):
