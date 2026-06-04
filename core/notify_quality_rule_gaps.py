@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from config.config import QUALITY_RULE_FORM_CONFIG
 from core.quality_rule_confirmation import (
+    get_pending_form_submission_items,
     load_backlog,
     merge_candidates_into_backlog,
     notify_new_candidates_via_tv,
@@ -42,16 +43,16 @@ def main():
     detected_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     backlog, new_items = merge_candidates_into_backlog(results, backlog=backlog, detected_at=detected_at)
 
-    form_result = submit_backlog_items_to_form(new_items, dry_run=args.dry_run_form)
+    form_submission_items = get_pending_form_submission_items(backlog)
+    form_result = submit_backlog_items_to_form(form_submission_items, dry_run=args.dry_run_form)
     if not form_result.get("skipped"):
         success_keys = {
             row["candidate_key"]
             for row in form_result["results"]
             if row.get("ok")
         }
-        for item in new_items:
+        for item in form_submission_items:
             item["form_submitted_at"] = detected_at if item["candidate_key"] in success_keys else item["form_submitted_at"]
-            item["notified_at"] = detected_at
 
     tv_result = notify_new_candidates_via_tv(
         new_items,
@@ -65,6 +66,7 @@ def main():
 
     payload = {
         "new_candidates": len(new_items),
+        "pending_form_candidates": len(form_submission_items),
         "form_result": form_result,
         "tv_result": tv_result,
     }

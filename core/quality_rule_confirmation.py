@@ -107,6 +107,17 @@ def merge_candidates_into_backlog(results, backlog=None, detected_at=None):
     return backlog, new_items
 
 
+def get_pending_form_submission_items(backlog):
+    items = backlog.get("items", {}).values()
+    pending_items = [
+        item
+        for item in items
+        if item.get("status") == "pending_confirmation" and not item.get("form_submitted_at")
+    ]
+    pending_items.sort(key=lambda item: (item.get("detected_at", ""), item.get("candidate_key", "")))
+    return pending_items
+
+
 def format_tv_confirmation_message(new_items, confirmation_sheet_url=""):
     lines = []
     lines.append("📋 质量规则待补充确认")
