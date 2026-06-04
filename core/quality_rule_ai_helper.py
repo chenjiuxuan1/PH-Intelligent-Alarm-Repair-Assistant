@@ -242,7 +242,7 @@ def trace_langfuse_via_http(messages, response_text, parsed_output):
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=8) as resp:
             return resp.getcode() in (200, 201, 202, 207)
     except Exception:
         return False
@@ -259,7 +259,7 @@ def request_openai_compatible_completion_via_sdk(messages):
     if not base_url or not api_key:
         raise ValueError("missing base_url or api_key")
 
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    client = OpenAI(api_key=api_key, base_url=base_url, timeout=20)
     completion = client.chat.completions.create(
         model=QUALITY_RULE_AI_CONFIG.get("model"),
         messages=messages,
@@ -296,7 +296,7 @@ def request_openai_compatible_completion_via_http(messages):
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=20) as resp:
             body = resp.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
