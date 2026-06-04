@@ -238,6 +238,10 @@ QUALITY_RULE_FORM_CONFIG = {
         "QUALITY_RULE_CONFIRMATION_EXPORT_URL",
         "https://docs.google.com/spreadsheets/d/1xh4MSxN-sgdfKZnpGmnY-OujnneimfAp7cgVdtct6SQ/export?format=csv&gid=160372088",
     ),
+    "confirmation_sheet_url": _get_env(
+        "QUALITY_RULE_CONFIRMATION_SHEET_URL",
+        "https://docs.google.com/spreadsheets/d/1xh4MSxN-sgdfKZnpGmnY-OujnneimfAp7cgVdtct6SQ/edit?resourcekey=&gid=160372088#gid=160372088",
+    ),
     "confirmation_column_map": json.loads(
         _get_env(
             "QUALITY_RULE_CONFIRMATION_COLUMN_MAP_JSON",

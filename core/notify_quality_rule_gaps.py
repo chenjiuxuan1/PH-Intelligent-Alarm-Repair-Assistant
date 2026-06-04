@@ -55,7 +55,7 @@ def main():
 
     tv_result = notify_new_candidates_via_tv(
         new_items,
-        form_view_url=QUALITY_RULE_FORM_CONFIG.get("view_url", ""),
+        confirmation_sheet_url=QUALITY_RULE_FORM_CONFIG.get("confirmation_sheet_url", ""),
     )
     if tv_result.get("success"):
         for item in new_items:

@@ -18,6 +18,7 @@ def load_module():
         "country": "ph",
         "view_url": "https://docs.google.com/forms/d/e/test/viewform",
         "post_url": "https://docs.google.com/forms/d/e/test/formResponse",
+        "confirmation_sheet_url": "https://docs.google.com/spreadsheets/d/test/edit#gid=1",
         "field_map": {
             "submission_type": "entry.1",
             "candidate_key": "entry.2",
@@ -115,15 +116,16 @@ class QualityRuleConfirmationTests(unittest.TestCase):
         self.assertEqual(second_new_items, [])
         self.assertEqual(len(backlog["items"]), 1)
 
-    def test_format_tv_confirmation_message_includes_form_url_and_candidate_key(self):
+    def test_format_tv_confirmation_message_includes_sheet_url_and_candidate_key(self):
         module, _ = load_module()
         backlog_item = module.candidate_to_backlog_item(self.make_candidate_result(), detected_at="2026-06-04 12:00:00")
 
-        message = module.format_tv_confirmation_message([backlog_item], form_view_url="https://docs.google.com/forms/viewform")
+        message = module.format_tv_confirmation_message([backlog_item], confirmation_sheet_url="https://docs.google.com/spreadsheets/d/test/edit#gid=1")
 
         self.assertIn("质量规则待补充确认", message)
         self.assertIn(backlog_item["dest_tbl"], message)
-        self.assertIn("https://docs.google.com/forms/viewform", message)
+        self.assertIn("https://docs.google.com/spreadsheets/d/test/edit#gid=1", message)
+        self.assertIn("确认响应表", message)
 
     def test_notify_new_candidates_via_tv_uses_shared_mentions(self):
         module, fake_send_tv = load_module()

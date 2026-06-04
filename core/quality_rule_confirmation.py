@@ -107,7 +107,7 @@ def merge_candidates_into_backlog(results, backlog=None, detected_at=None):
     return backlog, new_items
 
 
-def format_tv_confirmation_message(new_items, form_view_url=""):
+def format_tv_confirmation_message(new_items, confirmation_sheet_url=""):
     lines = []
     lines.append("📋 质量规则待补充确认")
     lines.append("")
@@ -117,19 +117,19 @@ def format_tv_confirmation_message(new_items, form_view_url=""):
         lines.append(f"• {item['country']} / {item['database']} / {item['dest_tbl']}")
     if len(new_items) > 20:
         lines.append(f"... 其余 {len(new_items) - 20} 条见待确认池")
-    if form_view_url:
+    if confirmation_sheet_url:
         lines.append("")
-        lines.append(f"确认表单: {form_view_url}")
+        lines.append(f"确认响应表: {confirmation_sheet_url}")
         lines.append("请在响应表中按需修改 need_apply：1=补充，0=关闭该表自动校验。")
     return "\n".join(lines)
 
 
-def notify_new_candidates_via_tv(new_items, mentions=None, form_view_url=None):
+def notify_new_candidates_via_tv(new_items, mentions=None, confirmation_sheet_url=None):
     if not new_items:
         return {"success": True, "skipped": True, "reason": "no_new_candidates"}
     message = format_tv_confirmation_message(
         new_items,
-        form_view_url=form_view_url or QUALITY_RULE_FORM_CONFIG.get("view_url", ""),
+        confirmation_sheet_url=confirmation_sheet_url or QUALITY_RULE_FORM_CONFIG.get("confirmation_sheet_url", ""),
     )
     return send_tv_report(
         message,
