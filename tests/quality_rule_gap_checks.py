@@ -186,6 +186,38 @@ class QualityRuleGapScannerTests(unittest.TestCase):
         self.assertEqual(result["status"], "blocked")
         self.assertIn("dep_tbls", result["reason"])
 
+    def test_build_count_rule_candidate_uses_ai_fallback_when_dep_tbls_missing(self):
+        module = load_module()
+        table = {
+            "id": 1,
+            "db": "dwd",
+            "tbl": "dwd_user_member_log",
+            "dep_tbls": json.dumps([]),
+            "increment_field": "",
+            "check_field": "",
+        }
+        ai_candidate = {
+            "name": "cnt",
+            "desc": "总数",
+            "src_db": "ods",
+            "src_tbl": "ods_user_member_log",
+            "dest_db": "dwd",
+            "dest_tbl": "dwd_user_member_log",
+            "src_sql": "select 1",
+            "dest_sql": "select 2",
+            "msg_template": "tpl",
+            "src_check_field": "created_at",
+            "dest_check_field": "etl_create_time",
+            "ai_reason": "ai guessed it",
+        }
+
+        with mock.patch.object(module, "generate_rule_candidate_with_ai", return_value=ai_candidate):
+            result = module.build_count_rule_candidate("dwd", table, {}, {})
+
+        self.assertEqual(result["status"], "candidate")
+        self.assertIn("AI 兜底生成", result["reason"])
+        self.assertEqual(result["candidate"]["src_tbl"], "ods_user_member_log")
+
     def test_build_count_rule_candidate_uses_git_hints_when_metadata_missing(self):
         module = load_module()
         table = {

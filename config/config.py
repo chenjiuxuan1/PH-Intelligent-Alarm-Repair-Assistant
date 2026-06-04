@@ -280,6 +280,17 @@ QUALITY_RULE_FORM_CONFIG = {
 }
 
 
+QUALITY_RULE_AI_CONFIG = {
+    "enabled": _get_env("QUALITY_RULE_AI_ENABLED", "1") == "1",
+    "api_key": _get_env("DASHSCOPE_API_KEY", ""),
+    "base_url": _get_env("QUALITY_RULE_AI_BASE_URL", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
+    "model": _get_env("QUALITY_RULE_AI_MODEL", "qwen3.6-plus"),
+    "langfuse_secret_key": _get_env("LANGFUSE_SECRET_KEY", ""),
+    "langfuse_public_key": _get_env("LANGFUSE_PUBLIC_KEY", ""),
+    "langfuse_base_url": _get_env("LANGFUSE_BASE_URL", "https://langfuse.kuainiu.io"),
+}
+
+
 REPAIR_CONFIG = {
     "scan_lookback_days": int(_get_env("SCAN_LOOKBACK_DAYS", "8")),
     "priority_workflow_codes": json.loads(_get_env("PRIORITY_WORKFLOW_CODES_JSON", "[]")),
