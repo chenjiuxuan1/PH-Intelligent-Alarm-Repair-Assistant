@@ -85,6 +85,7 @@ def candidate_to_backlog_item(item, detected_at=None):
         "scan_status": item.get("status", "candidate"),
         "notified_at": None,
         "form_submitted_at": None,
+        "last_form_payload_signature": "",
         "decision": "",
         "decision_notes": "",
         "decision_operator": "",
@@ -117,6 +118,7 @@ def result_to_backlog_item(item, detected_at=None):
         "scan_status": item.get("status", "blocked"),
         "notified_at": None,
         "form_submitted_at": None,
+        "last_form_payload_signature": "",
         "decision": "",
         "decision_notes": "",
         "decision_operator": "",
@@ -151,6 +153,7 @@ def merge_candidates_into_backlog(results, backlog=None, detected_at=None):
             preserved = {
                 "notified_at": existing.get("notified_at"),
                 "form_submitted_at": existing.get("form_submitted_at"),
+                "last_form_payload_signature": existing.get("last_form_payload_signature", ""),
                 "decision": existing.get("decision", ""),
                 "decision_notes": existing.get("decision_notes", ""),
                 "decision_operator": existing.get("decision_operator", ""),
@@ -166,14 +169,26 @@ def merge_candidates_into_backlog(results, backlog=None, detected_at=None):
     return backlog, new_items
 
 
+def compute_form_payload_signature(backlog_item):
+    payload = build_detection_form_payload(backlog_item)
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+
 def get_pending_form_submission_items(backlog, include_submitted=False):
     items = backlog.get("items", {}).values()
-    pending_items = [
-        item
-        for item in items
-        if item.get("status") == "pending_confirmation"
-        and (include_submitted or not item.get("form_submitted_at"))
-    ]
+    pending_items = []
+    for item in items:
+        if item.get("status") != "pending_confirmation":
+            continue
+        if not item.get("form_submitted_at"):
+            pending_items.append(item)
+            continue
+        if not include_submitted:
+            continue
+        current_signature = compute_form_payload_signature(item)
+        previous_signature = item.get("last_form_payload_signature", "")
+        if current_signature != previous_signature:
+            pending_items.append(item)
     pending_items.sort(key=lambda item: (item.get("detected_at", ""), item.get("candidate_key", "")))
     return pending_items
 

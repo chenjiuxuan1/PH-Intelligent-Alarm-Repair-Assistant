@@ -251,6 +251,7 @@ class QualityRuleConfirmationTests(unittest.TestCase):
         submitted_item = module.candidate_to_backlog_item(self.make_candidate_result(), detected_at="2026-06-04 12:01:00")
         submitted_item["candidate_key"] = "dwd::dwd.other_table::cnt"
         submitted_item["form_submitted_at"] = "2026-06-04 12:02:00"
+        submitted_item["last_form_payload_signature"] = module.compute_form_payload_signature(submitted_item)
         backlog = {
             "items": {
                 pending_item["candidate_key"]: pending_item,
@@ -260,10 +261,23 @@ class QualityRuleConfirmationTests(unittest.TestCase):
 
         pending_items = module.get_pending_form_submission_items(backlog, include_submitted=True)
 
-        self.assertEqual(
-            [item["candidate_key"] for item in pending_items],
-            [pending_item["candidate_key"], submitted_item["candidate_key"]],
-        )
+        self.assertEqual([item["candidate_key"] for item in pending_items], [pending_item["candidate_key"]])
+
+    def test_get_pending_form_submission_items_resubmits_only_changed_payloads(self):
+        module, _ = load_module()
+        submitted_item = module.candidate_to_backlog_item(self.make_candidate_result(), detected_at="2026-06-04 12:01:00")
+        submitted_item["form_submitted_at"] = "2026-06-04 12:02:00"
+        submitted_item["last_form_payload_signature"] = module.compute_form_payload_signature(submitted_item)
+        submitted_item["src_sql"] = "select changed"
+        backlog = {
+            "items": {
+                submitted_item["candidate_key"]: submitted_item,
+            }
+        }
+
+        pending_items = module.get_pending_form_submission_items(backlog, include_submitted=True)
+
+        self.assertEqual([item["candidate_key"] for item in pending_items], [submitted_item["candidate_key"]])
 
     def test_notify_new_candidates_via_tv_uses_shared_mentions(self):
         module, fake_send_tv = load_module()

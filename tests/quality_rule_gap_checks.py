@@ -179,7 +179,7 @@ class QualityRuleGapScannerTests(unittest.TestCase):
             result = module.build_count_rule_candidate("dwd", table, {}, ods_table_by_dest)
 
         self.assertEqual(result["status"], "blocked")
-        self.assertEqual(result["reason"], "无法推断 src_check_field/dest_check_field")
+        self.assertIn("无法推断 src_check_field/dest_check_field", result["reason"])
 
     def test_infer_source_check_field_prefers_git_hint_before_target_increment_field(self):
         module = load_module()

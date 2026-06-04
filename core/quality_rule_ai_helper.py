@@ -210,45 +210,79 @@ def count_rule_fields_are_consistent(parsed_output):
     return src_check_field.lower() == dest_check_field.lower()
 
 
-def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_roots=None):
+def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_roots=None, return_meta=False):
+    meta = {
+        "attempted": False,
+        "status": "not_called",
+        "reason": "",
+        "git_matches": [],
+    }
     if not ai_fallback_available():
-        return None
+        meta["status"] = "ai_not_available"
+        meta["reason"] = "AI 或 Langfuse 配置不完整"
+        return (None, meta) if return_meta else None
     try:
         from openai import OpenAI
-    except Exception:
-        return None
+    except Exception as exc:
+        meta["status"] = "openai_import_failed"
+        meta["reason"] = str(exc)
+        return (None, meta) if return_meta else None
 
     git_context = collect_git_context(
         table.get("dest_tbl") or table.get("tbl") or "",
         src_tbl=table.get("src_tbl"),
         git_roots=git_roots,
     )
+    meta["git_matches"] = [item["path"] for item in git_context]
     messages = build_ai_messages(database_name, table, git_context, failure_reason)
-    client = OpenAI(
-        api_key=QUALITY_RULE_AI_CONFIG.get("api_key"),
-        base_url=QUALITY_RULE_AI_CONFIG.get("base_url"),
-    )
-    completion = client.chat.completions.create(
-        model=QUALITY_RULE_AI_CONFIG.get("model"),
-        messages=messages,
-    )
-    response_text = completion.choices[0].message.content if completion.choices else ""
-    parsed = extract_json_object(response_text)
+    meta["attempted"] = True
+    meta["status"] = "requested"
+    try:
+        client = OpenAI(
+            api_key=QUALITY_RULE_AI_CONFIG.get("api_key"),
+            base_url=QUALITY_RULE_AI_CONFIG.get("base_url"),
+        )
+        completion = client.chat.completions.create(
+            model=QUALITY_RULE_AI_CONFIG.get("model"),
+            messages=messages,
+        )
+        response_text = completion.choices[0].message.content if completion.choices else ""
+    except Exception as exc:
+        meta["status"] = "ai_request_failed"
+        meta["reason"] = str(exc)
+        return (None, meta) if return_meta else None
+    try:
+        parsed = extract_json_object(response_text)
+    except Exception as exc:
+        meta["status"] = "ai_response_parse_failed"
+        meta["reason"] = str(exc)
+        return (None, meta) if return_meta else None
     traced = maybe_trace_langfuse(messages, response_text, parsed)
     if not traced:
-        return None
+        meta["status"] = "langfuse_trace_failed"
+        meta["reason"] = "Langfuse trace 未成功写入"
+        return (None, meta) if return_meta else None
 
     if not source_field_is_verified(parsed.get("src_check_field"), table, git_context):
-        return None
+        meta["status"] = "ai_output_unverified_source_field"
+        meta["reason"] = f"AI 生成的源字段未验证: {parsed.get('src_check_field', '')}"
+        return (None, meta) if return_meta else None
 
     if not count_rule_fields_are_consistent(parsed):
-        return None
+        meta["status"] = "ai_output_inconsistent_fields"
+        meta["reason"] = (
+            f"AI 生成的字段不一致: {parsed.get('src_check_field', '')} != {parsed.get('dest_check_field', '')}"
+        )
+        return (None, meta) if return_meta else None
 
     required_keys = ["src_db", "src_tbl", "src_sql", "dest_sql"]
     if any(not parsed.get(key) for key in required_keys):
-        return None
+        missing = [key for key in required_keys if not parsed.get(key)]
+        meta["status"] = "ai_output_missing_keys"
+        meta["reason"] = f"AI 返回缺少字段: {', '.join(missing)}"
+        return (None, meta) if return_meta else None
 
-    return {
+    candidate = {
         "name": "cnt",
         "desc": "总数",
         "src_db": parsed.get("src_db", ""),
@@ -264,3 +298,6 @@ def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_ro
         "ai_reason": parsed.get("reason", ""),
         "git_matches": [item["path"] for item in git_context],
     }
+    meta["status"] = "ok"
+    meta["reason"] = parsed.get("reason", "")
+    return (candidate, meta) if return_meta else candidate

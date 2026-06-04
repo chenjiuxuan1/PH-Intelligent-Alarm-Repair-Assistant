@@ -56,7 +56,22 @@ def main():
             if row.get("ok")
         }
         for item in form_submission_items:
-            item["form_submitted_at"] = detected_at if item["candidate_key"] in success_keys else item["form_submitted_at"]
+            if item["candidate_key"] in success_keys:
+                item["form_submitted_at"] = detected_at
+                item["last_form_payload_signature"] = json.dumps(
+                    {
+                        "candidate_key": item.get("candidate_key", ""),
+                        "country": item.get("country", ""),
+                        "database": item.get("database", ""),
+                        "tbl": item.get("dest_tbl", ""),
+                        "need_apply": "1",
+                        "src_sql": item.get("src_sql", ""),
+                        "dest_sql": item.get("dest_sql", ""),
+                        "human_check": "0",
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
 
     tv_result = notify_new_candidates_via_tv(
         new_items,
