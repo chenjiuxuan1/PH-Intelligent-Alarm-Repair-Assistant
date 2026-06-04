@@ -205,25 +205,33 @@ TABLE_CONFIG = {
 
 QUALITY_RULE_FORM_CONFIG = {
     "country": _get_env("QUALITY_RULE_FORM_COUNTRY", "ph"),
-    "view_url": _get_env("QUALITY_RULE_FORM_VIEW_URL", ""),
-    "post_url": _get_env("QUALITY_RULE_FORM_POST_URL", ""),
+    "view_url": _get_env(
+        "QUALITY_RULE_FORM_VIEW_URL",
+        "https://docs.google.com/forms/d/e/1FAIpQLSd-nOOjGFTgd4UMcP4_tyESsN225VgbZoEfEFs0ZWGAuo_Bww/viewform?usp=dialog",
+    ),
+    "post_url": _get_env(
+        "QUALITY_RULE_FORM_POST_URL",
+        "https://docs.google.com/forms/d/e/1FAIpQLSd-nOOjGFTgd4UMcP4_tyESsN225VgbZoEfEFs0ZWGAuo_Bww/formResponse",
+    ),
     "field_map": json.loads(_get_env("QUALITY_RULE_FORM_FIELD_MAP_JSON", "{}")),
     "required_fields": json.loads(_get_env("QUALITY_RULE_FORM_REQUIRED_FIELDS_JSON", '["submission_type", "candidate_key", "country", "database", "tbl", "need_apply"]')),
-    "confirmation_export_url": _get_env("QUALITY_RULE_CONFIRMATION_EXPORT_URL", ""),
+    "confirmation_export_url": _get_env(
+        "QUALITY_RULE_CONFIRMATION_EXPORT_URL",
+        "https://docs.google.com/spreadsheets/d/1xh4MSxN-sgdfKZnpGmnY-OujnneimfAp7cgVdtct6SQ/export?format=csv&gid=160372088",
+    ),
     "confirmation_column_map": json.loads(
         _get_env(
             "QUALITY_RULE_CONFIRMATION_COLUMN_MAP_JSON",
             json.dumps(
                 {
-                    "submission_type": "submission_type",
-                    "candidate_key": "candidate_key",
                     "country": "country",
                     "database": "database",
                     "tbl": "tbl",
                     "need_apply": "need_apply",
+                    "candidate_key": "candidate_key",
                     "operator": "operator",
                     "notes": "notes",
-                    "submitted_at": "Timestamp",
+                    "submitted_at": "时间戳记",
                 },
                 ensure_ascii=False,
             ),
