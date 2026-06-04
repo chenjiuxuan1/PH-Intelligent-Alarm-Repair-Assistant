@@ -104,6 +104,24 @@ def merge_candidates_into_backlog(results, backlog=None, detected_at=None):
         if key not in items:
             items[key] = backlog_item
             new_items.append(backlog_item)
+            continue
+
+        existing = items[key]
+        if existing.get("status") == "pending_confirmation":
+            preserved = {
+                "notified_at": existing.get("notified_at"),
+                "form_submitted_at": existing.get("form_submitted_at"),
+                "decision": existing.get("decision", ""),
+                "decision_notes": existing.get("decision_notes", ""),
+                "decision_operator": existing.get("decision_operator", ""),
+                "decision_submitted_at": existing.get("decision_submitted_at", ""),
+                "decision_src_sql": existing.get("decision_src_sql", ""),
+                "decision_dest_sql": existing.get("decision_dest_sql", ""),
+                "decision_human_check": existing.get("decision_human_check", ""),
+                "applied_at": existing.get("applied_at", ""),
+            }
+            backlog_item.update(preserved)
+            items[key] = backlog_item
     return backlog, new_items
 
 

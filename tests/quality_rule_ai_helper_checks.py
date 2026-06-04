@@ -71,3 +71,46 @@ class QualityRuleAiHelperTests(unittest.TestCase):
         finally:
             module.QUALITY_RULE_AI_CONFIG.clear()
             module.QUALITY_RULE_AI_CONFIG.update(original)
+
+    def test_generate_rule_candidate_with_ai_rejects_unverified_source_etl_field(self):
+        original = dict(module.QUALITY_RULE_AI_CONFIG)
+        try:
+            module.QUALITY_RULE_AI_CONFIG.update(
+                {
+                    "enabled": True,
+                    "api_key": "dashscope-key",
+                    "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                    "model": "qwen3.6-plus",
+                    "langfuse_secret_key": "secret",
+                    "langfuse_public_key": "public",
+                    "langfuse_base_url": "https://langfuse.kuainiu.io",
+                }
+            )
+
+            fake_completion = mock.Mock()
+            fake_completion.choices = [
+                mock.Mock(
+                    message=mock.Mock(
+                        content='{"src_db":"ods","src_tbl":"ods_x","src_check_field":"etl_create_time","dest_check_field":"etl_create_time","src_sql":"select 1","dest_sql":"select 2","reason":"guessed"}'
+                    )
+                )
+            ]
+            fake_client = mock.Mock()
+            fake_client.chat.completions.create.return_value = fake_completion
+
+            fake_openai_module = types.ModuleType("openai")
+            fake_openai_module.OpenAI = mock.Mock(return_value=fake_client)
+
+            with mock.patch.object(module, "maybe_trace_langfuse", return_value=True):
+                with mock.patch.dict(sys.modules, {"openai": fake_openai_module}):
+                    result = module.generate_rule_candidate_with_ai(
+                        "dwd",
+                        {"tbl": "dwd_user_member_log", "dest_tbl": "dwd_user_member_log", "columns": "[]"},
+                        "missing fields",
+                        git_roots=[],
+                    )
+
+            self.assertIsNone(result)
+        finally:
+            module.QUALITY_RULE_AI_CONFIG.clear()
+            module.QUALITY_RULE_AI_CONFIG.update(original)

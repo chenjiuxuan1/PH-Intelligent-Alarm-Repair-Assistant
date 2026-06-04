@@ -122,6 +122,38 @@ class QualityRuleConfirmationTests(unittest.TestCase):
         self.assertEqual(second_new_items, [])
         self.assertEqual(len(backlog["items"]), 1)
 
+    def test_merge_candidates_into_backlog_refreshes_pending_item_with_latest_sql(self):
+        module, _ = load_module()
+        original = self.make_candidate_result()
+        backlog, new_items = module.merge_candidates_into_backlog(
+            [original],
+            backlog={"items": {}},
+            detected_at="2026-06-04 12:00:00",
+        )
+        self.assertEqual(len(new_items), 1)
+
+        key = new_items[0]["candidate_key"]
+        backlog["items"][key]["form_submitted_at"] = "2026-06-04 12:05:00"
+        backlog["items"][key]["src_sql"] = "select old_src"
+        backlog["items"][key]["dest_sql"] = "select old_dest"
+
+        updated = self.make_candidate_result()
+        updated["reason"] = "新的候选 SQL"
+        updated["candidate"]["src_sql"] = "select new_src"
+        updated["candidate"]["dest_sql"] = "select new_dest"
+
+        backlog, second_new_items = module.merge_candidates_into_backlog(
+            [updated],
+            backlog=backlog,
+            detected_at="2026-06-04 12:10:00",
+        )
+
+        self.assertEqual(second_new_items, [])
+        self.assertEqual(backlog["items"][key]["src_sql"], "select new_src")
+        self.assertEqual(backlog["items"][key]["dest_sql"], "select new_dest")
+        self.assertEqual(backlog["items"][key]["reason"], "新的候选 SQL")
+        self.assertEqual(backlog["items"][key]["form_submitted_at"], "2026-06-04 12:05:00")
+
     def test_format_tv_confirmation_message_includes_sheet_url_and_candidate_key(self):
         module, _ = load_module()
         backlog_item = module.candidate_to_backlog_item(self.make_candidate_result(), detected_at="2026-06-04 12:00:00")

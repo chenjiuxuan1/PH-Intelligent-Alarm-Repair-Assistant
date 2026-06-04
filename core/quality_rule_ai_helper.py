@@ -87,6 +87,7 @@ def build_ai_messages(database_name, table, git_context, failure_reason):
             "只生成能用于质量校验的 SQL。",
             "如果是数量校验，请生成源表与目标表的 count SQL。",
             "如果目标表和源表的时间字段不同，必须分别给出 src_check_field 和 dest_check_field。",
+            "如果源表时间字段没有在 Git 代码片段或已知元数据中明确出现，不要猜测 etl_create_time/etl_update_time 作为源表字段。",
             "SQL 中如果使用时间窗口，必须保留 {begin} 和 {end} 占位符。",
             "如果无法可靠判断，也要返回最合理的候选，并在 reason 中说明依据。",
         ],
@@ -146,6 +147,34 @@ def maybe_trace_langfuse(messages, response_text, parsed_output):
         return False
 
 
+def source_field_is_verified(field_name, table, git_context):
+    if not field_name:
+        return False
+    normalized = str(field_name).lower()
+    if not normalized.startswith("etl_"):
+        return True
+
+    raw_columns = table.get("columns")
+    columns = []
+    if isinstance(raw_columns, list):
+        columns = [str(item).lower() for item in raw_columns]
+    elif isinstance(raw_columns, str) and raw_columns:
+        try:
+            parsed_columns = json.loads(raw_columns)
+            if isinstance(parsed_columns, list):
+                columns = [str(item).lower() for item in parsed_columns]
+        except Exception:
+            columns = []
+    if normalized in columns:
+        return True
+
+    for item in git_context or []:
+        snippet = (item or {}).get("snippet", "")
+        if re.search(rf"\b{re.escape(normalized)}\b", snippet, re.IGNORECASE):
+            return True
+    return False
+
+
 def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_roots=None):
     if not ai_fallback_available():
         return None
@@ -172,6 +201,9 @@ def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_ro
     parsed = extract_json_object(response_text)
     traced = maybe_trace_langfuse(messages, response_text, parsed)
     if not traced:
+        return None
+
+    if not source_field_is_verified(parsed.get("src_check_field"), table, git_context):
         return None
 
     required_keys = ["src_db", "src_tbl", "src_sql", "dest_sql"]
