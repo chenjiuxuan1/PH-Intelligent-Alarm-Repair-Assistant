@@ -120,7 +120,7 @@ def format_tv_confirmation_message(new_items, form_view_url=""):
     if form_view_url:
         lines.append("")
         lines.append(f"确认表单: {form_view_url}")
-        lines.append("请在响应表中填写 operator，并按需修改 need_apply：1=补充，0=关闭该表自动校验。")
+        lines.append("请在响应表中按需修改 need_apply：1=补充，0=关闭该表自动校验。")
     return "\n".join(lines)
 
 
@@ -272,11 +272,6 @@ def need_apply_is_enabled(value):
     return normalized in {"1", "yes", "y", "true", "apply", "补充", "确认补充"}
 
 
-def human_review_completed(row):
-    operator = (row.get("operator") or "").strip()
-    return bool(operator)
-
-
 def infer_candidate_key_from_row(row):
     existing = (row.get("candidate_key") or "").strip()
     if existing:
@@ -296,8 +291,6 @@ def latest_decisions_by_candidate(rows):
     for row in rows:
         key = infer_candidate_key_from_row(row)
         if not key:
-            continue
-        if not human_review_completed(row):
             continue
         row["candidate_key"] = key
         current = decisions.get(key)

@@ -204,7 +204,7 @@ class QualityRuleConfirmationTests(unittest.TestCase):
         self.assertEqual(len(rejected), 1)
         self.assertEqual(backlog_item["status"], "rejected")
 
-    def test_update_backlog_ignores_unreviewed_rows_without_operator(self):
+    def test_update_backlog_accepts_rows_without_operator(self):
         module, _ = load_module()
         backlog_item = module.candidate_to_backlog_item(self.make_candidate_result(), detected_at="2026-06-04 12:00:00")
         backlog = {"items": {backlog_item["candidate_key"]: backlog_item}}
@@ -222,9 +222,9 @@ class QualityRuleConfirmationTests(unittest.TestCase):
 
         approved, rejected = module.update_backlog_with_decisions(backlog, decision_rows)
 
-        self.assertEqual(approved, [])
+        self.assertEqual(len(approved), 1)
         self.assertEqual(rejected, [])
-        self.assertEqual(backlog_item["status"], "pending_confirmation")
+        self.assertEqual(backlog_item["status"], "approved")
 
 
 if __name__ == "__main__":
