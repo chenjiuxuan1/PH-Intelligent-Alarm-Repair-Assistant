@@ -52,8 +52,8 @@ def main():
                 "src_tbl": item["src_tbl"],
                 "dest_db": item["dest_db"],
                 "dest_tbl": item["dest_tbl"],
-                "src_sql": item["src_sql"],
-                "dest_sql": item["dest_sql"],
+                "src_sql": item.get("decision_src_sql") or item["src_sql"],
+                "dest_sql": item.get("decision_dest_sql") or item["dest_sql"],
                 "msg_template": (
                     "{dest_tbl} 数量不一致  期望值 {src_value}  实际值{dest_value}  差值为 {diff}"
                     if item["rule_name"] == "cnt"

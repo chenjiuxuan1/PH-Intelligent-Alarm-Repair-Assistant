@@ -131,7 +131,8 @@ def format_tv_confirmation_message(new_items, confirmation_sheet_url=""):
     if confirmation_sheet_url:
         lines.append("")
         lines.append(f"确认响应表: {confirmation_sheet_url}")
-        lines.append("请在响应表中按需修改 need_apply：1=补充，0=关闭该表自动校验。")
+        lines.append("请在响应表中按需修改 src_sql / dest_sql，并设置 need_apply：1=补充，0=关闭该表自动校验。")
+        lines.append("确认无误后将 human_check 改为 1，系统才会执行。")
     return "\n".join(lines)
 
 
@@ -230,6 +231,9 @@ def build_detection_form_payload(backlog_item, submitter="codex", cluster_or_env
         "database": backlog_item["database"],
         "tbl": backlog_item["dest_tbl"],
         "need_apply": "1",
+        "src_sql": backlog_item.get("src_sql", ""),
+        "dest_sql": backlog_item.get("dest_sql", ""),
+        "human_check": "0",
     }
 
 
@@ -283,6 +287,11 @@ def need_apply_is_enabled(value):
     return normalized in {"1", "yes", "y", "true", "apply", "补充", "确认补充"}
 
 
+def human_check_is_enabled(value):
+    normalized = (value or "").strip().lower()
+    return normalized in {"1", "yes", "y", "true", "pass", "通过", "确认"}
+
+
 def infer_candidate_key_from_row(row):
     existing = (row.get("candidate_key") or "").strip()
     if existing:
@@ -319,11 +328,16 @@ def update_backlog_with_decisions(backlog, decision_rows):
     for key, row in latest.items():
         if key not in items:
             continue
+        if not human_check_is_enabled(row.get("human_check", "")):
+            continue
         item = items[key]
         item["decision"] = row.get("need_apply", "")
         item["decision_notes"] = row.get("notes", "")
         item["decision_operator"] = row.get("operator", "")
         item["decision_submitted_at"] = row.get("submitted_at", "")
+        item["decision_src_sql"] = row.get("src_sql", "")
+        item["decision_dest_sql"] = row.get("dest_sql", "")
+        item["decision_human_check"] = row.get("human_check", "")
         item["status"] = "approved" if need_apply_is_enabled(item["decision"]) else "rejected"
         if item["status"] == "approved":
             approved.append(item)

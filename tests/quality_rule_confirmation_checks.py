@@ -26,6 +26,9 @@ def load_module():
             "database": "entry.4",
             "tbl": "entry.5",
             "need_apply": "entry.6",
+            "src_sql": "entry.7",
+            "dest_sql": "entry.8",
+            "human_check": "entry.9",
         },
         "required_fields": ["submission_type", "candidate_key", "country", "database", "tbl", "need_apply"],
         "confirmation_export_url": "https://docs.google.com/spreadsheets/d/export?format=csv",
@@ -36,6 +39,9 @@ def load_module():
             "database": "database",
             "tbl": "tbl",
             "need_apply": "need_apply",
+            "src_sql": "src_sql",
+            "dest_sql": "dest_sql",
+            "human_check": "human_check",
             "operator": "operator",
             "notes": "notes",
             "submitted_at": "Timestamp",
@@ -162,12 +168,13 @@ class QualityRuleConfirmationTests(unittest.TestCase):
 
     def test_parse_confirmation_rows_maps_csv_headers(self):
         module, _ = load_module()
-        csv_text = "Timestamp,submission_type,candidate_key,country,database,tbl,need_apply,operator,notes\n2026-06-04 18:00:00,decision,dwd::dwd.dwd_user_member_log::cnt,ph,dwd,dwd_user_member_log,1,alice,ok\n"
+        csv_text = "Timestamp,submission_type,candidate_key,country,database,tbl,need_apply,src_sql,dest_sql,human_check,operator,notes\n2026-06-04 18:00:00,decision,dwd::dwd.dwd_user_member_log::cnt,ph,dwd,dwd_user_member_log,1,select 1,select 2,1,alice,ok\n"
 
         rows = module.parse_confirmation_rows(csv_text, module.QUALITY_RULE_FORM_CONFIG["confirmation_column_map"])
 
         self.assertEqual(rows[0]["candidate_key"], "dwd::dwd.dwd_user_member_log::cnt")
         self.assertEqual(rows[0]["need_apply"], "1")
+        self.assertEqual(rows[0]["human_check"], "1")
         self.assertEqual(rows[0]["operator"], "alice")
 
     def test_update_backlog_with_decisions_marks_approved_items(self):
@@ -182,6 +189,9 @@ class QualityRuleConfirmationTests(unittest.TestCase):
                 "database": "dwd",
                 "tbl": "dwd_user_member_log",
                 "need_apply": "1",
+                "src_sql": "select override_src",
+                "dest_sql": "select override_dest",
+                "human_check": "1",
                 "operator": "alice",
                 "notes": "please apply",
                 "submitted_at": "2026-06-04 18:00:00",
@@ -193,6 +203,8 @@ class QualityRuleConfirmationTests(unittest.TestCase):
         self.assertEqual(len(approved), 1)
         self.assertEqual(rejected, [])
         self.assertEqual(backlog_item["status"], "approved")
+        self.assertEqual(backlog_item["decision_src_sql"], "select override_src")
+        self.assertEqual(backlog_item["decision_dest_sql"], "select override_dest")
         self.assertEqual(backlog_item["decision_operator"], "alice")
 
     def test_build_form_payload_requires_candidate_key(self):
@@ -216,6 +228,7 @@ class QualityRuleConfirmationTests(unittest.TestCase):
                 "database": "dwd",
                 "tbl": "dwd_user_member_log",
                 "need_apply": "0",
+                "human_check": "1",
                 "operator": "alice",
                 "submitted_at": "2026-06-04 18:00:00",
             }
@@ -238,6 +251,7 @@ class QualityRuleConfirmationTests(unittest.TestCase):
                 "database": "dwd",
                 "tbl": "dwd_user_member_log",
                 "need_apply": "1",
+                "human_check": "1",
                 "operator": "",
                 "submitted_at": "2026-06-04 18:00:00",
             }
@@ -248,6 +262,29 @@ class QualityRuleConfirmationTests(unittest.TestCase):
         self.assertEqual(len(approved), 1)
         self.assertEqual(rejected, [])
         self.assertEqual(backlog_item["status"], "approved")
+
+    def test_update_backlog_ignores_rows_without_human_check(self):
+        module, _ = load_module()
+        backlog_item = module.candidate_to_backlog_item(self.make_candidate_result(), detected_at="2026-06-04 12:00:00")
+        backlog = {"items": {backlog_item["candidate_key"]: backlog_item}}
+        decision_rows = [
+            {
+                "submission_type": "decision",
+                "candidate_key": backlog_item["candidate_key"],
+                "country": "ph",
+                "database": "dwd",
+                "tbl": "dwd_user_member_log",
+                "need_apply": "1",
+                "human_check": "0",
+                "submitted_at": "2026-06-04 18:00:00",
+            }
+        ]
+
+        approved, rejected = module.update_backlog_with_decisions(backlog, decision_rows)
+
+        self.assertEqual(approved, [])
+        self.assertEqual(rejected, [])
+        self.assertEqual(backlog_item["status"], "pending_confirmation")
 
 
 if __name__ == "__main__":

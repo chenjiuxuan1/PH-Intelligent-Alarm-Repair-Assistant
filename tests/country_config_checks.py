@@ -123,9 +123,9 @@ class CountryConfigTests(unittest.TestCase):
             "QUALITY_RULE_FORM_COUNTRY": "ph",
             "QUALITY_RULE_FORM_VIEW_URL": "https://docs.google.com/forms/d/e/viewform",
             "QUALITY_RULE_FORM_POST_URL": "https://docs.google.com/forms/d/e/formResponse",
-            "QUALITY_RULE_FORM_FIELD_MAP_JSON": json.dumps({"candidate_key": "entry.123"}),
+            "QUALITY_RULE_FORM_FIELD_MAP_JSON": json.dumps({"candidate_key": "entry.123", "src_sql": "entry.456", "dest_sql": "entry.789", "human_check": "entry.101"}),
             "QUALITY_RULE_CONFIRMATION_EXPORT_URL": "https://docs.google.com/spreadsheets/d/e/export?format=csv",
-            "QUALITY_RULE_CONFIRMATION_COLUMN_MAP_JSON": json.dumps({"candidate_key": "候选键", "need_apply": "是否补充"}),
+            "QUALITY_RULE_CONFIRMATION_COLUMN_MAP_JSON": json.dumps({"candidate_key": "候选键", "need_apply": "是否补充", "src_sql": "源SQL", "dest_sql": "目标SQL", "human_check": "人工检查"}),
             "QUALITY_RULE_NOTIFY_BOT_ID": "08826b39-e6eb-44fb-9c25-9778a8171f49",
             "QUALITY_RULE_NOTIFY_MENTIONS": "a@example.com,b@example.com",
             "QUALITY_GIT_SCAN_ROOTS": "/data/git,/srv/git",
@@ -137,9 +137,10 @@ class CountryConfigTests(unittest.TestCase):
         self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["country"], "ph")
         self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["view_url"], env["QUALITY_RULE_FORM_VIEW_URL"])
         self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["post_url"], env["QUALITY_RULE_FORM_POST_URL"])
-        self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["field_map"], {"candidate_key": "entry.123"})
+        self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["field_map"]["src_sql"], "entry.456")
         self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["confirmation_export_url"], env["QUALITY_RULE_CONFIRMATION_EXPORT_URL"])
         self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["confirmation_column_map"]["need_apply"], "是否补充")
+        self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["confirmation_column_map"]["human_check"], "人工检查")
         self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["notify_bot_id"], env["QUALITY_RULE_NOTIFY_BOT_ID"])
         self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["notify_mentions"], ["a@example.com", "b@example.com"])
         self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["git_scan_roots"], ["/data/git", "/srv/git"])
