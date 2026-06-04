@@ -36,7 +36,7 @@ class QualityRuleAiHelperTests(unittest.TestCase):
             module.QUALITY_RULE_AI_CONFIG.clear()
             module.QUALITY_RULE_AI_CONFIG.update(original)
 
-    def test_generate_rule_candidate_with_ai_returns_none_when_langfuse_trace_fails(self):
+    def test_generate_rule_candidate_with_ai_keeps_result_when_langfuse_trace_fails(self):
         original = dict(module.QUALITY_RULE_AI_CONFIG)
         try:
             module.QUALITY_RULE_AI_CONFIG.update(
@@ -52,7 +52,7 @@ class QualityRuleAiHelperTests(unittest.TestCase):
             )
 
             fake_completion = mock.Mock()
-            fake_completion.choices = [mock.Mock(message=mock.Mock(content='{"src_db":"ods","src_tbl":"ods_x","src_sql":"select 1","dest_sql":"select 2","reason":"ok"}'))]
+            fake_completion.choices = [mock.Mock(message=mock.Mock(content='{"src_db":"ods","src_tbl":"ods_x","src_check_field":"create_at","dest_check_field":"create_at","src_sql":"select 1","dest_sql":"select 2","reason":"ok"}'))]
             fake_client = mock.Mock()
             fake_client.chat.completions.create.return_value = fake_completion
 
@@ -61,14 +61,17 @@ class QualityRuleAiHelperTests(unittest.TestCase):
 
             with mock.patch.object(module, "maybe_trace_langfuse", return_value=False):
                 with mock.patch.dict(sys.modules, {"openai": fake_openai_module}):
-                    result = module.generate_rule_candidate_with_ai(
+                    result, meta = module.generate_rule_candidate_with_ai(
                         "dwd",
-                        {"tbl": "dwd_user_member_log", "dest_tbl": "dwd_user_member_log"},
+                        {"tbl": "dwd_user_member_log", "dest_tbl": "dwd_user_member_log", "columns": '["create_at"]'},
                         "missing fields",
                         git_roots=[],
+                        return_meta=True,
                     )
 
-            self.assertIsNone(result)
+            self.assertIsNotNone(result)
+            self.assertEqual(meta["status"], "ok")
+            self.assertEqual(meta["trace_status"], "langfuse_trace_failed")
         finally:
             module.QUALITY_RULE_AI_CONFIG.clear()
             module.QUALITY_RULE_AI_CONFIG.update(original)

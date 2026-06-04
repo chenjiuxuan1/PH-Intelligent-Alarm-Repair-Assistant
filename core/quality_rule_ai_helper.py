@@ -381,14 +381,12 @@ def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_ro
         meta["status"] = "ai_response_parse_failed"
         meta["reason"] = str(exc)
         return (None, meta) if return_meta else None
-    traced = maybe_trace_langfuse(messages, response_text, parsed)
-    if not traced:
-        meta["status"] = "langfuse_trace_failed"
-        meta["reason"] = "Langfuse trace 未成功写入"
-        return (None, meta) if return_meta else None
-
     draft_candidate = build_candidate_from_parsed_output(table, parsed, git_context)
     meta["draft_candidate"] = draft_candidate
+    traced = maybe_trace_langfuse(messages, response_text, parsed)
+    meta["trace_status"] = "ok" if traced else "langfuse_trace_failed"
+    if not traced:
+        meta["trace_reason"] = "Langfuse trace 未成功写入"
 
     if not source_field_is_verified(parsed.get("src_check_field"), table, git_context):
         meta["status"] = "ai_output_unverified_source_field"
