@@ -177,28 +177,9 @@ def maybe_trace_langfuse(messages, response_text, parsed_output):
     host = QUALITY_RULE_AI_CONFIG.get("langfuse_base_url")
     if not secret_key or not public_key or not host:
         return False
-    try:
-        from langfuse import Langfuse
-    except Exception:
-        return trace_langfuse_via_http(messages, response_text, parsed_output)
-    try:
-        client = Langfuse(
-            secret_key=secret_key,
-            public_key=public_key,
-            host=host,
-        )
-        trace = client.trace(name="quality_rule_ai_fallback")
-        generation = trace.generation(
-            name="generate_quality_rule_candidate",
-            model=QUALITY_RULE_AI_CONFIG.get("model"),
-            input=messages,
-        )
-        generation.end(output=response_text)
-        trace.update(output=parsed_output)
-        client.flush()
-        return True
-    except Exception:
-        return trace_langfuse_via_http(messages, response_text, parsed_output)
+    # Use the HTTP ingestion path consistently. The SDK flush path can block
+    # indefinitely on some remote hosts, which makes rule generation appear hung.
+    return trace_langfuse_via_http(messages, response_text, parsed_output)
 
 
 def trace_langfuse_via_http(messages, response_text, parsed_output):
