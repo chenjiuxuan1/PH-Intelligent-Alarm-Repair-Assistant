@@ -186,6 +186,35 @@ class QualityRuleGapScannerTests(unittest.TestCase):
 
         self.assertEqual(check_field, "request_time")
 
+    def test_infer_source_check_field_ignores_generic_git_etl_field_without_source_columns(self):
+        module = load_module()
+        table = {
+            "db": "dwd",
+            "tbl": "dwd_user_activity_log",
+            "dest_tbl": "dwd_user_activity_log",
+            "src_tbl": "log_dp_request_record",
+            "src_db": "log",
+            "increment_field": "etl_create_time",
+            "columns": None,
+            "origin_check_field": None,
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            sql_path = Path(temp_dir) / "dwd_user_activity_log.sql"
+            sql_path.write_text(
+                """
+                insert overwrite dwd.dwd_user_activity_log
+                select *
+                from log.log_dp_request_record
+                where etl_create_time >= '${begin}'
+                  and etl_create_time < '${end}'
+                """,
+                encoding="utf-8",
+            )
+
+            check_field = module.infer_source_check_field(table, git_roots=[temp_dir])
+
+        self.assertIsNone(check_field)
+
     def test_infer_source_check_field_ignores_origin_check_field_not_in_columns(self):
         module = load_module()
         table = {
@@ -203,6 +232,24 @@ class QualityRuleGapScannerTests(unittest.TestCase):
         check_field = module.infer_source_check_field(table)
 
         self.assertEqual(check_field, "created_at")
+
+    def test_infer_source_check_field_ignores_unverified_origin_etl_field_without_columns(self):
+        module = load_module()
+        table = {
+            "db": "dwd",
+            "tbl": "dwd_asset_tc_vprod_order",
+            "dest_tbl": "dwd_asset_tc_vprod_order",
+            "src_tbl": "ods_r2_tc_vprod_order",
+            "src_db": "ods",
+            "increment_field": "etl_create_time",
+            "columns": None,
+            "origin_check_field": "etl_create_time",
+            "origin_src_tbl": "r2_tc_vprod_order",
+        }
+
+        check_field = module.infer_source_check_field(table)
+
+        self.assertIsNone(check_field)
 
     def test_infer_source_check_field_returns_none_for_unverified_etl_increment_field(self):
         module = load_module()

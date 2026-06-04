@@ -255,8 +255,11 @@ def infer_source_check_field(table, git_roots=None):
 
     origin_check_field = table.get("origin_check_field")
     columns = parse_json_list(table.get("columns"))
-    if origin_check_field and (not columns or origin_check_field in columns):
-        return origin_check_field
+    if origin_check_field:
+        if columns and origin_check_field in columns:
+            return origin_check_field
+        if not origin_check_field.lower().startswith("etl_"):
+            return origin_check_field
 
     source_create_field = determine_create_field(table)
     if source_create_field:
@@ -267,8 +270,12 @@ def infer_source_check_field(table, git_roots=None):
         src_tbl=table.get("src_tbl"),
         git_roots=git_roots,
     )
-    if git_hints.get("check_field"):
-        return git_hints.get("check_field")
+    git_check_field = git_hints.get("check_field")
+    if git_check_field:
+        if not git_check_field.lower().startswith("etl_"):
+            return git_check_field
+        if columns and git_check_field in columns:
+            return git_check_field
 
     increment_field = table.get("increment_field")
     if increment_field:
