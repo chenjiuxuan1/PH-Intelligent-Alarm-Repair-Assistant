@@ -18,6 +18,9 @@ def ai_fallback_available():
         and QUALITY_RULE_AI_CONFIG.get("api_key")
         and QUALITY_RULE_AI_CONFIG.get("base_url")
         and QUALITY_RULE_AI_CONFIG.get("model")
+        and QUALITY_RULE_AI_CONFIG.get("langfuse_secret_key")
+        and QUALITY_RULE_AI_CONFIG.get("langfuse_public_key")
+        and QUALITY_RULE_AI_CONFIG.get("langfuse_base_url")
     )
 
 
@@ -118,11 +121,11 @@ def maybe_trace_langfuse(messages, response_text, parsed_output):
     public_key = QUALITY_RULE_AI_CONFIG.get("langfuse_public_key")
     host = QUALITY_RULE_AI_CONFIG.get("langfuse_base_url")
     if not secret_key or not public_key or not host:
-        return
+        return False
     try:
         from langfuse import Langfuse
     except Exception:
-        return
+        return False
     try:
         client = Langfuse(
             secret_key=secret_key,
@@ -138,8 +141,9 @@ def maybe_trace_langfuse(messages, response_text, parsed_output):
         generation.end(output=response_text)
         trace.update(output=parsed_output)
         client.flush()
+        return True
     except Exception:
-        return
+        return False
 
 
 def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_roots=None):
@@ -166,7 +170,9 @@ def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_ro
     )
     response_text = completion.choices[0].message.content if completion.choices else ""
     parsed = extract_json_object(response_text)
-    maybe_trace_langfuse(messages, response_text, parsed)
+    traced = maybe_trace_langfuse(messages, response_text, parsed)
+    if not traced:
+        return None
 
     required_keys = ["src_db", "src_tbl", "src_sql", "dest_sql"]
     if any(not parsed.get(key) for key in required_keys):

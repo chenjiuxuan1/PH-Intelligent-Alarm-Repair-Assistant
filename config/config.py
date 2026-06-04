@@ -203,6 +203,20 @@ TABLE_CONFIG = {
 }
 
 
+# AI fallback defaults for quality rule generation.
+# Fill these in directly if you prefer code-based configuration instead of
+# exporting shell environment variables. Environment variables still override
+# these values when present.
+QUALITY_RULE_AI_DEFAULTS = {
+    "api_key": "",
+    "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    "model": "qwen3.6-plus",
+    "langfuse_secret_key": "",
+    "langfuse_public_key": "",
+    "langfuse_base_url": "https://langfuse.kuainiu.io",
+}
+
+
 QUALITY_RULE_FORM_CONFIG = {
     "country": _get_env("QUALITY_RULE_FORM_COUNTRY", "ph"),
     "view_url": _get_env(
@@ -282,12 +296,18 @@ QUALITY_RULE_FORM_CONFIG = {
 
 QUALITY_RULE_AI_CONFIG = {
     "enabled": _get_env("QUALITY_RULE_AI_ENABLED", "1") == "1",
-    "api_key": _get_env("DASHSCOPE_API_KEY", ""),
-    "base_url": _get_env("QUALITY_RULE_AI_BASE_URL", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
-    "model": _get_env("QUALITY_RULE_AI_MODEL", "qwen3.6-plus"),
-    "langfuse_secret_key": _get_env("LANGFUSE_SECRET_KEY", ""),
-    "langfuse_public_key": _get_env("LANGFUSE_PUBLIC_KEY", ""),
-    "langfuse_base_url": _get_env("LANGFUSE_BASE_URL", "https://langfuse.kuainiu.io"),
+    "api_key": _get_env("DASHSCOPE_API_KEY", QUALITY_RULE_AI_DEFAULTS["api_key"]),
+    "base_url": _get_env("QUALITY_RULE_AI_BASE_URL", QUALITY_RULE_AI_DEFAULTS["base_url"]),
+    "model": _get_env("QUALITY_RULE_AI_MODEL", QUALITY_RULE_AI_DEFAULTS["model"]),
+    "langfuse_secret_key": _get_env(
+        "LANGFUSE_SECRET_KEY", QUALITY_RULE_AI_DEFAULTS["langfuse_secret_key"]
+    ),
+    "langfuse_public_key": _get_env(
+        "LANGFUSE_PUBLIC_KEY", QUALITY_RULE_AI_DEFAULTS["langfuse_public_key"]
+    ),
+    "langfuse_base_url": _get_env(
+        "LANGFUSE_BASE_URL", QUALITY_RULE_AI_DEFAULTS["langfuse_base_url"]
+    ),
 }
 
 
