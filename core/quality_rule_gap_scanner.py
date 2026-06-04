@@ -52,10 +52,14 @@ CHECK_FIELD_CANDIDATES = (
     "etl_update_time",
     "created_at",
     "create_at",
+    "requested_at",
+    "request_at",
     "updated_at",
     "update_at",
+    "request_time",
     "create_time",
     "update_time",
+    "request_date",
     "create_date",
     "update_date",
 )
@@ -86,6 +90,20 @@ def parse_git_roots(raw_value=None):
         if normalized:
             roots.append(normalized)
     return roots
+
+
+def looks_like_time_field(field_name):
+    if not field_name:
+        return False
+    lower_name = field_name.lower()
+    if lower_name in CHECK_FIELD_CANDIDATES:
+        return True
+    return bool(
+        re.search(
+            r"(time|date|_at)$",
+            lower_name,
+        )
+    )
 
 
 def iter_git_candidate_files(git_roots, table_names):
@@ -147,7 +165,7 @@ def infer_git_rule_hints(dest_tbl, src_tbl=None, git_roots=None):
             if re.search(rf"\b{re.escape(candidate)}\b", text, re.IGNORECASE):
                 check_field_candidates.append(candidate)
         for match in where_pattern.findall(text):
-            if match.lower() in CHECK_FIELD_CANDIDATES:
+            if looks_like_time_field(match):
                 check_field_candidates.append(match.lower())
 
     result = {}
@@ -235,22 +253,27 @@ def infer_source_check_field(table, git_roots=None):
     if dest_db in ("ods", "ods_security"):
         return determine_create_field(table)
 
-    if table.get("origin_check_field"):
-        return table.get("origin_check_field")
+    origin_check_field = table.get("origin_check_field")
+    columns = parse_json_list(table.get("columns"))
+    if origin_check_field and (not columns or origin_check_field in columns):
+        return origin_check_field
 
     source_create_field = determine_create_field(table)
     if source_create_field:
         return source_create_field
-
-    if table.get("increment_field"):
-        return table.get("increment_field")
 
     git_hints = infer_git_rule_hints(
         table.get("dest_tbl") or table.get("tbl") or "",
         src_tbl=table.get("src_tbl"),
         git_roots=git_roots,
     )
-    return git_hints.get("check_field")
+    if git_hints.get("check_field"):
+        return git_hints.get("check_field")
+
+    if table.get("increment_field"):
+        return table.get("increment_field")
+
+    return None
 
 
 def infer_target_check_field(table, git_roots=None):

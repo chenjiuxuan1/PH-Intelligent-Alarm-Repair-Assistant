@@ -148,6 +148,53 @@ class QualityRuleGapScannerTests(unittest.TestCase):
         self.assertIn("WHERE created_at >=", result["candidate"]["src_sql"])
         self.assertIn("WHERE etl_create_time >=", result["candidate"]["dest_sql"])
 
+    def test_infer_source_check_field_prefers_git_hint_before_target_increment_field(self):
+        module = load_module()
+        table = {
+            "db": "dwd",
+            "tbl": "dwd_user_activity_log",
+            "dest_tbl": "dwd_user_activity_log",
+            "src_tbl": "log_dp_request_record",
+            "src_db": "log",
+            "increment_field": "etl_create_time",
+            "columns": None,
+            "origin_check_field": None,
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            sql_path = Path(temp_dir) / "dwd_user_activity_log.sql"
+            sql_path.write_text(
+                """
+                insert overwrite dwd.dwd_user_activity_log
+                select *
+                from log.log_dp_request_record
+                where request_time >= '${begin}'
+                  and request_time < '${end}'
+                """,
+                encoding="utf-8",
+            )
+
+            check_field = module.infer_source_check_field(table, git_roots=[temp_dir])
+
+        self.assertEqual(check_field, "request_time")
+
+    def test_infer_source_check_field_ignores_origin_check_field_not_in_columns(self):
+        module = load_module()
+        table = {
+            "db": "dwd",
+            "tbl": "dwd_asset_tc_vprod_order",
+            "dest_tbl": "dwd_asset_tc_vprod_order",
+            "src_tbl": "ods_r2_tc_vprod_order",
+            "src_db": "ods",
+            "increment_field": "etl_create_time",
+            "columns": json.dumps(["id", "created_at", "order_no"]),
+            "origin_check_field": "etl_create_time",
+            "origin_src_tbl": "r2_tc_vprod_order",
+        }
+
+        check_field = module.infer_source_check_field(table)
+
+        self.assertEqual(check_field, "created_at")
+
     def test_infer_git_rule_hints_extracts_dep_table_and_check_field(self):
         module = load_module()
         with tempfile.TemporaryDirectory() as temp_dir:
