@@ -146,6 +146,12 @@ WORKSPACE_CONFIG["manual_review_state_file"] = os.path.join(
 WORKSPACE_CONFIG["repair_counts_file"] = os.path.join(
     WORKSPACE_CONFIG["auto_repair_records_dir"], "repair_counts.json"
 )
+WORKSPACE_CONFIG["quality_rule_backlog_file"] = os.path.join(
+    WORKSPACE_CONFIG["auto_repair_records_dir"], "quality_rule_backlog.json"
+)
+WORKSPACE_CONFIG["quality_rule_sync_state_file"] = os.path.join(
+    WORKSPACE_CONFIG["auto_repair_records_dir"], "quality_rule_sync_state.json"
+)
 WORKSPACE_CONFIG["schedule_export_csv"] = _get_env(
     "SCHEDULE_EXPORT_CSV",
     os.path.join(WORKSPACE_CONFIG["root"], "dolphinscheduler", "schedules_export.csv"),
@@ -194,6 +200,46 @@ OPENCLAW_CONFIG = {
 TABLE_CONFIG = {
     "quality_result_table": _get_env("QUALITY_RESULT_TABLE", "wattrel_quality_result"),
     "quality_alert_table": _get_env("QUALITY_ALERT_TABLE", "wattrel_quality_alert"),
+}
+
+
+QUALITY_RULE_FORM_CONFIG = {
+    "country": _get_env("QUALITY_RULE_FORM_COUNTRY", "ph"),
+    "view_url": _get_env("QUALITY_RULE_FORM_VIEW_URL", ""),
+    "post_url": _get_env("QUALITY_RULE_FORM_POST_URL", ""),
+    "field_map": json.loads(_get_env("QUALITY_RULE_FORM_FIELD_MAP_JSON", "{}")),
+    "required_fields": json.loads(_get_env("QUALITY_RULE_FORM_REQUIRED_FIELDS_JSON", '["submission_type", "candidate_key", "country", "database", "tbl", "need_apply"]')),
+    "confirmation_export_url": _get_env("QUALITY_RULE_CONFIRMATION_EXPORT_URL", ""),
+    "confirmation_column_map": json.loads(
+        _get_env(
+            "QUALITY_RULE_CONFIRMATION_COLUMN_MAP_JSON",
+            json.dumps(
+                {
+                    "submission_type": "submission_type",
+                    "candidate_key": "candidate_key",
+                    "country": "country",
+                    "database": "database",
+                    "tbl": "tbl",
+                    "need_apply": "need_apply",
+                    "operator": "operator",
+                    "notes": "notes",
+                    "submitted_at": "Timestamp",
+                },
+                ensure_ascii=False,
+            ),
+        )
+    ),
+    "notify_bot_id": _get_env("QUALITY_RULE_NOTIFY_BOT_ID", "08826b39-e6eb-44fb-9c25-9778a8171f49"),
+    "notify_mentions": [
+        item.strip()
+        for item in _get_env("QUALITY_RULE_NOTIFY_MENTIONS", "").split(",")
+        if item.strip()
+    ],
+    "git_scan_roots": [
+        item.strip()
+        for item in _get_env("QUALITY_GIT_SCAN_ROOTS", "").split(",")
+        if item.strip()
+    ],
 }
 
 

@@ -22,7 +22,7 @@ TV_BOT_ID = TV_CONFIG['bot_id']
 TV_APP_ID = TV_CONFIG['app_id']
 
 
-def send_tv_report(message, mentions=None):
+def send_tv_report(message, mentions=None, bot_id=None):
     """
     发送报告到TV Alert API
     
@@ -39,7 +39,7 @@ def send_tv_report(message, mentions=None):
     # TV API 实测要求顶层必须包含 message 字段。
     payload = {
         'appId': TV_APP_ID,
-        'botId': TV_BOT_ID,
+        'botId': bot_id or TV_BOT_ID,
         'message': message,
         'mentions': mentions,
     }

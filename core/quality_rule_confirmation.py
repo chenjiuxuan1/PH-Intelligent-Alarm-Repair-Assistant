@@ -1,0 +1,350 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import csv
+import html
+import json
+import re
+import urllib.parse
+import urllib.request
+from datetime import datetime
+from pathlib import Path
+
+from config.config import QUALITY_RULE_FORM_CONFIG, WORKSPACE_CONFIG
+from core.quality_rule_gap_scanner import resolve_rule_name
+from core.send_tv_report import send_tv_report
+
+
+QUALITY_RULE_BACKLOG_FILE = WORKSPACE_CONFIG["quality_rule_backlog_file"]
+QUALITY_RULE_SYNC_STATE_FILE = WORKSPACE_CONFIG["quality_rule_sync_state_file"]
+
+
+def ensure_parent_dir(path):
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+
+
+def load_json_file(path, default):
+    target = Path(path)
+    if not target.exists():
+        return default
+    try:
+        with target.open("r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception:
+        return default
+
+
+def save_json_file(path, payload):
+    ensure_parent_dir(path)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+
+
+def load_backlog():
+    data = load_json_file(QUALITY_RULE_BACKLOG_FILE, {"items": {}})
+    data.setdefault("items", {})
+    return data
+
+
+def save_backlog(backlog):
+    save_json_file(QUALITY_RULE_BACKLOG_FILE, backlog)
+
+
+def load_sync_state():
+    data = load_json_file(QUALITY_RULE_SYNC_STATE_FILE, {})
+    return data if isinstance(data, dict) else {}
+
+
+def save_sync_state(state):
+    save_json_file(QUALITY_RULE_SYNC_STATE_FILE, state)
+
+
+def build_candidate_key(item):
+    return f"{item['database']}::{item['dest_db']}.{item['dest_tbl']}::{item['rule_name']}"
+
+
+def candidate_to_backlog_item(item, detected_at=None):
+    detected_at = detected_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    candidate = item["candidate"]
+    return {
+        "candidate_key": build_candidate_key(item),
+        "country": item.get("country") or QUALITY_RULE_FORM_CONFIG.get("country", "ph"),
+        "status": "pending_confirmation",
+        "database": item["database"],
+        "rule_name": item["rule_name"],
+        "dest_db": item["dest_db"],
+        "dest_tbl": item["dest_tbl"],
+        "src_db": candidate.get("src_db", ""),
+        "src_tbl": candidate.get("src_tbl", ""),
+        "check_field": candidate.get("check_field") or "",
+        "src_sql": candidate.get("src_sql", ""),
+        "dest_sql": candidate.get("dest_sql", ""),
+        "reason": item.get("reason", ""),
+        "git_matches": candidate.get("git_matches", []),
+        "detected_at": detected_at,
+        "notified_at": None,
+        "form_submitted_at": None,
+        "decision": "",
+        "decision_notes": "",
+        "decision_operator": "",
+        "decision_submitted_at": "",
+        "applied_at": "",
+    }
+
+
+def merge_candidates_into_backlog(results, backlog=None, detected_at=None):
+    backlog = backlog or load_backlog()
+    items = backlog.setdefault("items", {})
+    new_items = []
+    for item in results:
+        if item.get("status") != "candidate":
+            continue
+        backlog_item = candidate_to_backlog_item(item, detected_at=detected_at)
+        key = backlog_item["candidate_key"]
+        if key not in items:
+            items[key] = backlog_item
+            new_items.append(backlog_item)
+    return backlog, new_items
+
+
+def format_tv_confirmation_message(new_items, form_view_url=""):
+    lines = []
+    lines.append("📋 质量规则待补充确认")
+    lines.append("")
+    lines.append(f"本次新增待确认规则: {len(new_items)}")
+    lines.append("")
+    for item in new_items[:20]:
+        lines.append(f"• {item['country']} / {item['database']} / {item['dest_tbl']}")
+    if len(new_items) > 20:
+        lines.append(f"... 其余 {len(new_items) - 20} 条见待确认池")
+    if form_view_url:
+        lines.append("")
+        lines.append(f"确认表单: {form_view_url}")
+        lines.append("请在响应表中填写 operator，并按需修改 need_apply：1=补充，0=关闭该表自动校验。")
+    return "\n".join(lines)
+
+
+def notify_new_candidates_via_tv(new_items, mentions=None, form_view_url=None):
+    if not new_items:
+        return {"success": True, "skipped": True, "reason": "no_new_candidates"}
+    message = format_tv_confirmation_message(
+        new_items,
+        form_view_url=form_view_url or QUALITY_RULE_FORM_CONFIG.get("view_url", ""),
+    )
+    return send_tv_report(
+        message,
+        mentions=mentions or QUALITY_RULE_FORM_CONFIG.get("notify_mentions", []),
+        bot_id=QUALITY_RULE_FORM_CONFIG.get("notify_bot_id"),
+    )
+
+
+def extract_hidden_fields(html_text: str) -> dict:
+    names = ["fvv", "pageHistory", "fbzx", "submissionTimestamp", "partialResponse"]
+    extracted = {}
+    for name in names:
+        match = re.search(rf'name="{re.escape(name)}"[^>]*value="([^"]*)"', html_text)
+        if match:
+            extracted[name] = html.unescape(match.group(1))
+    extracted.setdefault("fvv", "1")
+    extracted.setdefault("pageHistory", "0")
+    extracted.setdefault("submissionTimestamp", "-1")
+    return extracted
+
+
+def fetch_viewform(view_url):
+    req = urllib.request.Request(view_url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return resp.read().decode("utf-8", errors="replace")
+
+
+def build_form_payload(payload, field_map, hidden=None, required_fields=None):
+    hidden = hidden or {}
+    required_fields = set(required_fields or [])
+    missing = sorted(field for field in required_fields if not payload.get(field))
+    if missing:
+        raise ValueError(f"missing required payload fields: {', '.join(missing)}")
+
+    form = {}
+    for field, value in payload.items():
+        entry_id = field_map.get(field)
+        if not entry_id or value is None:
+            continue
+        form[entry_id] = str(value)
+    form.update(hidden)
+    return form
+
+
+def submit_google_form(view_url, post_url, field_map, payload, required_fields=None, dry_run=False):
+    html_text = fetch_viewform(view_url)
+    hidden = extract_hidden_fields(html_text)
+    form_payload = build_form_payload(payload, field_map, hidden=hidden, required_fields=required_fields)
+
+    if dry_run:
+        return {"ok": True, "dry_run": True, "payload": form_payload}
+
+    data = urllib.parse.urlencode(form_payload).encode("utf-8")
+    req = urllib.request.Request(
+        post_url,
+        data=data,
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "Mozilla/5.0",
+            "Referer": view_url,
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        body = resp.read().decode("utf-8", errors="replace")
+        status = resp.getcode()
+    has_cn_success = "您的回复已记录" in body
+    has_en_success = "Your response has been recorded" in body
+    has_confirm_hint = "form_confirm" in body or "另填写一份回复" in body
+    ok = status == 200 and (has_cn_success or has_en_success or has_confirm_hint)
+    return {
+        "ok": ok,
+        "status": status,
+        "matched_success_text": has_cn_success or has_en_success,
+        "matched_confirm_hint": has_confirm_hint,
+        "body_preview": body[:500] if not ok else "",
+    }
+
+
+def build_detection_form_payload(backlog_item, submitter="codex", cluster_or_env="wattrel"):
+    return {
+        "submission_type": "detected",
+        "candidate_key": backlog_item["candidate_key"],
+        "submitter": submitter,
+        "country": backlog_item.get("country") or QUALITY_RULE_FORM_CONFIG.get("country", "ph"),
+        "cluster_or_env": cluster_or_env,
+        "database": backlog_item["database"],
+        "tbl": backlog_item["dest_tbl"],
+        "need_apply": "1",
+    }
+
+
+def submit_backlog_items_to_form(backlog_items, form_config=None, dry_run=False):
+    form_config = form_config or QUALITY_RULE_FORM_CONFIG
+    view_url = form_config.get("view_url")
+    post_url = form_config.get("post_url")
+    field_map = form_config.get("field_map") or {}
+    required_fields = form_config.get("required_fields") or []
+    if not view_url or not post_url or not field_map:
+        return {"submitted": 0, "results": [], "skipped": True, "reason": "form_config_incomplete"}
+
+    results = []
+    submitted = 0
+    for item in backlog_items:
+        payload = build_detection_form_payload(item)
+        result = submit_google_form(
+            view_url,
+            post_url,
+            field_map,
+            payload,
+            required_fields=required_fields,
+            dry_run=dry_run,
+        )
+        result["candidate_key"] = item["candidate_key"]
+        results.append(result)
+        if result.get("ok"):
+            submitted += 1
+    return {"submitted": submitted, "results": results, "skipped": False}
+
+
+def fetch_confirmation_csv(export_url):
+    req = urllib.request.Request(export_url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return resp.read().decode("utf-8", errors="replace")
+
+
+def parse_confirmation_rows(csv_text, column_map):
+    reader = csv.DictReader(csv_text.splitlines())
+    rows = []
+    for raw_row in reader:
+        item = {}
+        for logical_key, column_name in column_map.items():
+            item[logical_key] = raw_row.get(column_name, "").strip()
+        rows.append(item)
+    return rows
+
+
+def need_apply_is_enabled(value):
+    normalized = (value or "").strip().lower()
+    return normalized in {"1", "yes", "y", "true", "apply", "补充", "确认补充"}
+
+
+def human_review_completed(row):
+    operator = (row.get("operator") or "").strip()
+    return bool(operator)
+
+
+def infer_candidate_key_from_row(row):
+    existing = (row.get("candidate_key") or "").strip()
+    if existing:
+        return existing
+
+    database = (row.get("database") or "").strip()
+    dest_tbl = (row.get("tbl") or row.get("dest_tbl") or "").strip()
+    if not database or not dest_tbl:
+        return ""
+
+    rule_name = resolve_rule_name(database) if database else ""
+    return f"{database}::{database}.{dest_tbl}::{rule_name}"
+
+
+def latest_decisions_by_candidate(rows):
+    decisions = {}
+    for row in rows:
+        key = infer_candidate_key_from_row(row)
+        if not key:
+            continue
+        if not human_review_completed(row):
+            continue
+        row["candidate_key"] = key
+        current = decisions.get(key)
+        submitted_at = row.get("submitted_at", "")
+        if current is None or submitted_at >= current.get("submitted_at", ""):
+            decisions[key] = row
+    return decisions
+
+
+def update_backlog_with_decisions(backlog, decision_rows):
+    items = backlog.setdefault("items", {})
+    latest = latest_decisions_by_candidate(decision_rows)
+    approved = []
+    rejected = []
+    for key, row in latest.items():
+        if key not in items:
+            continue
+        item = items[key]
+        item["decision"] = row.get("need_apply", "")
+        item["decision_notes"] = row.get("notes", "")
+        item["decision_operator"] = row.get("operator", "")
+        item["decision_submitted_at"] = row.get("submitted_at", "")
+        item["status"] = "approved" if need_apply_is_enabled(item["decision"]) else "rejected"
+        if item["status"] == "approved":
+            approved.append(item)
+        else:
+            rejected.append(item)
+    return approved, rejected
+
+
+def format_tv_apply_summary(applied_items, disabled_items, failed_items):
+    lines = ["📋 数据质量规则处理结果", ""]
+    if applied_items:
+        lines.append("✅ 已补充规则:")
+        for item in applied_items:
+            lines.append(f"• {item['country']} / {item['database']} / {item['dest_tbl']}")
+        lines.append("")
+    if disabled_items:
+        lines.append("⏸️ 已关闭自动校验:")
+        for item in disabled_items:
+            lines.append(f"• {item['country']} / {item['database']} / {item['dest_tbl']}")
+        lines.append("")
+    if failed_items:
+        lines.append("⚠️ 待人工调整:")
+        for item in failed_items:
+            lines.append(f"• {item['country']} / {item['database']} / {item['dest_tbl']}")
+            lines.append(f"  原因: {item.get('reason', '未知原因')}")
+        lines.append("")
+    lines.append("请自行查看并按需调整。")
+    return "\n".join(lines)

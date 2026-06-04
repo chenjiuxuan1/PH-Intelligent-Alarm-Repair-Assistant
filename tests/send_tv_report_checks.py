@@ -103,6 +103,20 @@ class SendTvReportTests(unittest.TestCase):
             },
         )
 
+    def test_send_tv_report_allows_bot_id_override(self):
+        module = load_module()
+        captured = {}
+
+        def fake_urlopen(request, timeout=0):
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return FakeResponse(202, '{"ok":true}')
+
+        with mock.patch.object(module.urllib.request, "urlopen", side_effect=fake_urlopen):
+            result = module.send_tv_report("报告内容", bot_id="test-bot-id")
+
+        self.assertTrue(result["success"])
+        self.assertEqual(captured["body"]["botId"], "test-bot-id")
+
     def test_send_tv_report_treats_http_200_as_success(self):
         module = load_module()
 
