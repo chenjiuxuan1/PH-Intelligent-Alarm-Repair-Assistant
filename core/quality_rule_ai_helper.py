@@ -74,13 +74,23 @@ def iter_git_candidate_files(git_roots, table_names):
         yield from fallback_matches
 
 
-def collect_git_context(dest_tbl, src_tbl=None, git_roots=None, limit=3):
+def collect_git_context(dest_tbl, src_tbl=None, git_roots=None, limit=3, preferred_paths=None):
     table_names = [dest_tbl]
     if src_tbl:
         table_names.append(src_tbl)
 
     snippets = []
-    for path in iter_git_candidate_files(git_roots, table_names):
+    preferred = []
+    for candidate in preferred_paths or []:
+        try:
+            path_obj = Path(candidate)
+        except Exception:
+            continue
+        if path_obj.exists() and path_obj.is_file():
+            preferred.append(path_obj)
+
+    candidate_iter = preferred if preferred else iter_git_candidate_files(git_roots, table_names)
+    for path in candidate_iter:
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")
         except Exception:
@@ -390,6 +400,7 @@ def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_ro
         table.get("dest_tbl") or table.get("tbl") or "",
         src_tbl=table.get("src_tbl"),
         git_roots=git_roots,
+        preferred_paths=table.get("git_matches") or [],
     )
     meta["git_matches"] = [item["path"] for item in git_context]
     messages = build_ai_messages(database_name, table, git_context, failure_reason)

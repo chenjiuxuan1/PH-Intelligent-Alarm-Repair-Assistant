@@ -223,6 +223,27 @@ class QualityRuleAiHelperTests(unittest.TestCase):
             module.QUALITY_RULE_AI_CONFIG.clear()
             module.QUALITY_RULE_AI_CONFIG.update(original)
 
+    def test_collect_git_context_prefers_existing_git_matches(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            match_file = root / "matched.sql"
+            other_file = root / "other.sql"
+            match_file.write_text("select * from ods_repay_cpop_income_item where create_at >= '{begin}'")
+            other_file.write_text("select * from something_else")
+
+            snippets = module.collect_git_context(
+                "dwd_cst_pay_cost_detail",
+                src_tbl="ods_repay_cpop_income_item",
+                git_roots=[str(root)],
+                preferred_paths=[str(match_file)],
+            )
+
+            self.assertEqual(len(snippets), 1)
+            self.assertEqual(snippets[0]["path"], str(match_file))
+
     def test_build_ai_messages_normalizes_datetime_values(self):
         messages = module.build_ai_messages(
             "dwd",
