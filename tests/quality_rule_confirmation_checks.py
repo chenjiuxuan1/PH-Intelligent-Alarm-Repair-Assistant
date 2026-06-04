@@ -245,6 +245,62 @@ class QualityRuleConfirmationTests(unittest.TestCase):
 
         self.assertEqual([item["candidate_key"] for item in pending_items], [pending_item["candidate_key"]])
 
+    def test_get_pending_form_submission_items_skips_blocked_pending_items(self):
+        module, _ = load_module()
+        blocked_item = module.candidate_to_backlog_item(self.make_candidate_result(), detected_at="2026-06-04 12:00:00")
+        blocked_item["candidate_key"] = "dwd::dwd.blocked_table::cnt"
+        blocked_item["scan_status"] = "blocked"
+        backlog = {"items": {blocked_item["candidate_key"]: blocked_item}}
+
+        pending_items = module.get_pending_form_submission_items(backlog, include_submitted=True)
+
+        self.assertEqual(pending_items, [])
+
+    def test_get_pending_form_submission_items_skips_count_items_without_sql(self):
+        module, _ = load_module()
+        pending_item = module.candidate_to_backlog_item(self.make_candidate_result(), detected_at="2026-06-04 12:00:00")
+        pending_item["src_sql"] = ""
+        pending_item["dest_sql"] = ""
+        backlog = {"items": {pending_item["candidate_key"]: pending_item}}
+
+        pending_items = module.get_pending_form_submission_items(backlog, include_submitted=True)
+
+        self.assertEqual(pending_items, [])
+
+    def test_get_pending_form_submission_items_keeps_if_exists_with_only_dest_sql(self):
+        module, _ = load_module()
+        item = {
+            "candidate_key": "ads_sec::ads_sec.ads_3601_funds_deposit::if_exists",
+            "country": "ph",
+            "status": "pending_confirmation",
+            "database": "ads_sec",
+            "rule_name": "if_exists",
+            "dest_db": "ads_sec",
+            "dest_tbl": "ads_3601_funds_deposit",
+            "src_db": "",
+            "src_tbl": "",
+            "check_field": "",
+            "src_sql": "",
+            "dest_sql": "select count(*) as if_exists from ads_sec.ads_3601_funds_deposit",
+            "reason": "可自动生成 if_exists 规则",
+            "git_matches": [],
+            "detected_at": "2026-06-04 12:00:00",
+            "scan_status": "candidate",
+            "notified_at": None,
+            "form_submitted_at": None,
+            "last_form_payload_signature": "",
+            "decision": "",
+            "decision_notes": "",
+            "decision_operator": "",
+            "decision_submitted_at": "",
+            "applied_at": "",
+        }
+        backlog = {"items": {item["candidate_key"]: item}}
+
+        pending_items = module.get_pending_form_submission_items(backlog)
+
+        self.assertEqual([row["candidate_key"] for row in pending_items], [item["candidate_key"]])
+
     def test_get_pending_form_submission_items_can_include_already_submitted_items(self):
         module, _ = load_module()
         pending_item = module.candidate_to_backlog_item(self.make_candidate_result(), detected_at="2026-06-04 12:00:00")

@@ -174,11 +174,26 @@ def compute_form_payload_signature(backlog_item):
     return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
+def backlog_item_has_submittable_sql(item):
+    rule_name = (item.get("rule_name") or "").strip().lower()
+    src_sql = (item.get("src_sql") or "").strip()
+    dest_sql = (item.get("dest_sql") or "").strip()
+    if rule_name == "if_exists":
+        return bool(dest_sql)
+    if rule_name == "cnt":
+        return bool(src_sql and dest_sql)
+    return bool(dest_sql)
+
+
 def get_pending_form_submission_items(backlog, include_submitted=False):
     items = backlog.get("items", {}).values()
     pending_items = []
     for item in items:
         if item.get("status") != "pending_confirmation":
+            continue
+        if item.get("scan_status") != "candidate":
+            continue
+        if not backlog_item_has_submittable_sql(item):
             continue
         if not item.get("form_submitted_at"):
             pending_items.append(item)
