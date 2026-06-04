@@ -269,15 +269,15 @@ def build_ai_messages(database_name, table, git_context, failure_reason):
                 }
             },
             {
-                "scenario": "源表只有业务时间 create_at，目标表只有 ETL 入仓时间 etl_create_time",
+                "scenario": "源表和目标表都存在同一业务事件时间字段，应优先按该字段做同窗口数量校验",
                 "expected_output": {
-                    "src_db": "ods",
-                    "src_tbl": "ods_repay_cpop_income_item",
-                    "src_check_field": "create_at",
-                    "dest_check_field": "etl_create_time",
-                    "src_sql": "SELECT count(1) AS cnt FROM ods.ods_repay_cpop_income_item WHERE create_at >= '{begin}' AND create_at < '{end}'",
-                    "dest_sql": "SELECT count(1) AS cnt FROM dwd_sec.dwd_cst_pay_cost_detail WHERE etl_create_time >= '{begin}' AND etl_create_time < '{end}'",
-                    "reason": "源表按业务创建时间 create_at 过滤，目标表按 ETL 入仓时间 etl_create_time 过滤；两边字段不同也要先输出草稿并解释原因。"
+                    "src_db": "biz_catalog.repay",
+                    "src_tbl": "asset",
+                    "src_check_field": "asset_create_at",
+                    "dest_check_field": "asset_create_at",
+                    "src_sql": "SELECT COUNT(*) as cnt FROM biz_catalog.repay.`asset` WHERE asset_create_at >= '{begin}' AND asset_create_at < '{end}'",
+                    "dest_sql": "SELECT COUNT(*) as cnt FROM ods.ods_repay_asset WHERE asset_create_at >= '{begin}' AND asset_create_at < '{end}'",
+                    "reason": "源表和目标表都存在同一业务事件时间字段 asset_create_at，应优先按相同字段做同窗口数量校验，而不是退回到 ETL 入仓时间。"
                 }
             }
         ],
@@ -297,7 +297,8 @@ def build_ai_messages(database_name, table, git_context, failure_reason):
             "SQL 中如果使用时间窗口，必须保留 {begin} 和 {end} 占位符。",
             "不要臆测源表存在 etl_create_time/etl_update_time，除非 Git 片段或 source_columns 明确出现。",
             "如果源表和目标表字段同语义，应优先给出相同字段名。",
-            "如果源表和目标表字段不同，也必须返回 src_check_field、dest_check_field、src_sql 和 dest_sql 草稿，并在 reason 中解释差异原因。",
+            "如果 Git 片段或元数据表明源表和目标表都存在同一业务事件字段，必须优先使用同一个字段名，不要退回到目标表的 etl_create_time。",
+            "只有在确实找不到同名业务事件字段时，才允许源表和目标表使用不同字段；此时也必须返回 src_check_field、dest_check_field、src_sql 和 dest_sql 草稿，并在 reason 中解释差异原因。",
             "如果无法完全确定，也返回最合理草稿，并在 reason 中简要说明依据。",
         ],
     }
