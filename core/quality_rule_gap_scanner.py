@@ -365,6 +365,26 @@ def count_rule_fields_are_consistent(src_check_field, dest_check_field):
     return str(src_check_field).lower() == str(dest_check_field).lower()
 
 
+def fast_path_count_rule_needs_ai(table, src_check_field, dest_check_field):
+    if not src_check_field or not dest_check_field:
+        return False, ""
+
+    src_field = str(src_check_field).lower()
+    dest_field = str(dest_check_field).lower()
+    if src_field == dest_field:
+        return False, ""
+
+    src_is_etl = src_field.startswith("etl_")
+    dest_is_etl = dest_field.startswith("etl_")
+    if not dest_is_etl or src_is_etl:
+        return False, ""
+
+    return True, (
+        "快速规则命中目标侧 ETL 时间字段，但源侧为业务时间字段，"
+        "该口径不满足要求，需继续生成更合理的校验 SQL"
+    )
+
+
 def build_sql_statements(src_db, src_table, target_db, target_table, src_check_field, dest_check_field, table):
     if src_check_field is None and dest_check_field is None:
         src_sql = f"SELECT COUNT(*) as cnt FROM {src_db}.{src_table}"
@@ -844,6 +864,38 @@ def build_count_rule_candidate(database_name, table, rule_map, ods_table_by_dest
                 working_table.get("dest_db") or working_table.get("db"),
                 ai_meta,
                 "无法推断 src_check_field/dest_check_field",
+                fallback={"check_field": dest_check_field or ""},
+            )
+        needs_ai, needs_ai_reason = fast_path_count_rule_needs_ai(
+            working_table,
+            src_check_field,
+            dest_check_field,
+        )
+        if needs_ai:
+            ai_candidate, ai_meta = call_ai_candidate(
+                database_name,
+                working_table,
+                needs_ai_reason,
+                git_roots=git_roots,
+            )
+            if ai_candidate:
+                return finalize_candidate_with_validation(
+                    database_name,
+                    target_table,
+                    ai_candidate.get("dest_db") or working_table.get("dest_db") or working_table.get("db"),
+                    ai_candidate,
+                    working_table,
+                    git_roots=git_roots,
+                    cursor=cursor,
+                    base_reason=f"AI 兜底生成规则: {ai_candidate.get('ai_reason', needs_ai_reason)}",
+                    ai_status=ai_meta.get("status", ""),
+                )
+            return blocked_result_with_ai_draft(
+                working_table,
+                target_table,
+                working_table.get("dest_db") or working_table.get("db"),
+                ai_meta,
+                needs_ai_reason,
                 fallback={"check_field": dest_check_field or ""},
             )
     else:

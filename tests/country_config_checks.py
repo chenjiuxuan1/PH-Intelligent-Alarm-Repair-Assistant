@@ -145,6 +145,12 @@ class CountryConfigTests(unittest.TestCase):
         self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["notify_mentions"], ["a@example.com", "b@example.com"])
         self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["git_scan_roots"], ["/data/git", "/srv/git"])
 
+    def test_quality_rule_validation_uses_backend_query_token_by_default(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            module = load_module()
+
+        self.assertEqual(module.QUALITY_RULE_VALIDATION_CONFIG["sr_token"], "fuxi_backend_query_all_20260518")
+
 
 if __name__ == "__main__":
     unittest.main()

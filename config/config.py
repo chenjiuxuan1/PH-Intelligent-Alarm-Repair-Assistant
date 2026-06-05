@@ -318,7 +318,10 @@ QUALITY_RULE_VALIDATION_CONFIG = {
     "window_hours": int(_get_env("QUALITY_RULE_VALIDATION_WINDOW_HOURS", "24")),
     "backend": _get_env("QUALITY_RULE_VALIDATION_BACKEND", "sr_gateway"),
     "sr_base_url": _get_env("QUALITY_RULE_SR_BASE_URL", _get_env("FUXI_BASE_URL", "https://sr-box.kuainiu.io")),
-    "sr_token": _get_env("QUALITY_RULE_SR_TOKEN", _get_env("FUXI_API_TOKEN", "fuxi_demo_token")),
+    "sr_token": _get_env(
+        "QUALITY_RULE_SR_TOKEN",
+        _get_env("FUXI_API_TOKEN", "fuxi_backend_query_all_20260518"),
+    ),
     "sr_access_mode": _get_env("QUALITY_RULE_SR_ACCESS_MODE", "local"),
     "sr_timeout_sec": int(_get_env("QUALITY_RULE_SR_TIMEOUT_SEC", "60")),
 }

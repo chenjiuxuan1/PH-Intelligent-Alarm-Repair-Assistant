@@ -168,6 +168,50 @@ class QualityRuleGapScannerTests(unittest.TestCase):
         self.assertEqual(result["candidate"]["dest_check_field"], "fee_finish_at")
         self.assertEqual(result["validation_status"], "matched")
 
+    def test_build_count_rule_candidate_escalates_fast_path_when_dest_falls_back_to_etl_time(self):
+        module = load_module()
+        table = {
+            "id": 1,
+            "db": "dwd_sec",
+            "tbl": "dwd_cst_pay_cost_detail",
+            "dep_tbls": json.dumps(["ods_repay_cpop_income_item"]),
+            "increment_field": "etl_create_time",
+            "check_field": "etl_create_time",
+        }
+        ods_table_by_dest = {
+            "ods_repay_cpop_income_item": {
+                "dest_tbl": "ods_repay_cpop_income_item",
+                "check_field": "",
+                "columns": json.dumps(["id", "create_at", "order_no"]),
+                "src_tbl": "repay_cpop_income_item",
+            }
+        }
+        ai_candidate = {
+            "name": "cnt",
+            "src_db": "ods",
+            "src_tbl": "ods_repay_cpop_income_item",
+            "dest_db": "dwd_sec",
+            "dest_tbl": "dwd_cst_pay_cost_detail",
+            "src_sql": "SELECT COUNT(DISTINCT order_no) AS cnt FROM ods.ods_repay_cpop_income_item WHERE create_at >= '{begin}' AND create_at < '{end}'",
+            "dest_sql": "SELECT COUNT(DISTINCT order_no) AS cnt FROM dwd_sec.dwd_cst_pay_cost_detail WHERE fee_finish_at >= '{begin}' AND fee_finish_at < '{end}'",
+            "src_check_field": "create_at",
+            "dest_check_field": "fee_finish_at",
+            "ai_reason": "目标侧 etl 时间口径过弱，改用业务完成时间",
+        }
+        ai_meta = {"status": "ok", "reason": "", "git_matches": []}
+
+        with mock.patch.object(module, "call_ai_candidate", return_value=(ai_candidate, ai_meta)) as mocked_ai:
+            with mock.patch.object(
+                module,
+                "finalize_candidate_with_validation",
+                return_value={"status": "candidate", "candidate": ai_candidate},
+            ) as mocked_finalize:
+                result = module.build_count_rule_candidate("dwd_sec", table, {}, ods_table_by_dest)
+
+        self.assertEqual(result["status"], "candidate")
+        self.assertIn("目标侧 ETL 时间字段", mocked_ai.call_args.args[2])
+        mocked_finalize.assert_called_once()
+
     def test_build_count_rule_candidate_keeps_ai_draft_sql_in_blocked_result(self):
         module = load_module()
         table = {
