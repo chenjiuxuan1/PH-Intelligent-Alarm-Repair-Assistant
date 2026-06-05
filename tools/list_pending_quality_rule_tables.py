@@ -15,7 +15,13 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="List pending quality-rule tables using the same scanner logic as wattrel-style generation."
     )
-    parser.add_argument("--database", required=True, help="Target database, e.g. dwd_sec")
+    parser.add_argument(
+        "--database",
+        action="append",
+        dest="databases",
+        default=None,
+        help="Target database. Repeat this flag to scan multiple databases.",
+    )
     parser.add_argument("--monitor-level", type=int, default=None)
     parser.add_argument("--git-root", action="append", dest="git_roots", default=None)
     parser.add_argument(
@@ -29,6 +35,9 @@ def parse_args():
 
 def main():
     args = parse_args()
+    databases = [db.strip() for db in (args.databases or []) if str(db).strip()]
+    if not databases:
+        raise SystemExit("--database is required at least once")
     allowed_statuses = {
         status.strip()
         for status in (args.statuses or "").split(",")
@@ -36,7 +45,7 @@ def main():
     } or {"candidate", "blocked"}
 
     results = scan_quality_rule_gaps(
-        databases=[args.database],
+        databases=databases,
         monitor_level=args.monitor_level,
         git_roots=args.git_roots,
     )
@@ -48,7 +57,7 @@ def main():
             continue
         items.append(
             {
-                "database": item.get("database") or item.get("dest_db") or args.database,
+                "database": item.get("database") or item.get("dest_db") or "",
                 "tbl": item.get("dest_tbl", ""),
                 "status": status,
                 "reason": item.get("reason", ""),
