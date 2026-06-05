@@ -130,31 +130,42 @@ class QualityRuleGapScannerTests(unittest.TestCase):
         self.assertEqual(result["candidate"]["src_check_field"], "created_at")
         self.assertIn("SELECT COUNT(*)", result["candidate"]["src_sql"])
 
-    def test_build_count_rule_candidate_blocks_inconsistent_source_and_target_check_fields(self):
+    def test_build_count_rule_candidate_allows_inconsistent_verified_fields(self):
         module = load_module()
         table = {
             "id": 1,
             "db": "dwd",
-            "tbl": "dwd_asset_tc_vprod_order",
-            "dep_tbls": json.dumps(["ods_r2_tc_vprod_order"]),
-            "increment_field": "etl_create_time",
-            "check_field": "",
+            "tbl": "dwd_cst_pay_cost_detail",
+            "dep_tbls": json.dumps(["ods_repay_cpop_income_item"]),
+            "increment_field": "fee_finish_at",
+            "check_field": "fee_finish_at",
+            "dest_columns": ["fee_finish_at", "etl_create_time"],
         }
         ods_table_by_dest = {
-            "ods_r2_tc_vprod_order": {
-                "dest_tbl": "ods_r2_tc_vprod_order",
+            "ods_repay_cpop_income_item": {
+                "dest_tbl": "ods_repay_cpop_income_item",
                 "check_field": "",
-                "columns": json.dumps(["id", "created_at", "order_no"]),
-                "src_tbl": "r2_tc_vprod_order",
+                "columns": json.dumps(["id", "create_at", "order_no"]),
+                "src_tbl": "repay_cpop_income_item",
             }
         }
-
-        with mock.patch.object(module, "generate_rule_candidate_with_ai", return_value=(None, {"status": "not_called", "reason": "", "git_matches": []})):
+        with mock.patch.object(module, "validate_candidate_sql", return_value={
+            "ok": True,
+            "reason": "SQL 可运行且两边结果一致",
+            "validation_status": "matched",
+            "validation_error": "",
+            "validation_window_begin": "2026-06-04 12:00:00",
+            "validation_window_end": "2026-06-05 12:00:00",
+            "src_value": 10,
+            "dest_value": 10,
+            "diff": 0,
+        }):
             result = module.build_count_rule_candidate("dwd", table, {}, ods_table_by_dest)
 
-        self.assertEqual(result["status"], "blocked")
-        self.assertIn("不一致", result["reason"])
-        self.assertEqual(result["src_tbl"], "ods_r2_tc_vprod_order")
+        self.assertEqual(result["status"], "candidate")
+        self.assertEqual(result["candidate"]["src_check_field"], "create_at")
+        self.assertEqual(result["candidate"]["dest_check_field"], "fee_finish_at")
+        self.assertEqual(result["validation_status"], "matched")
 
     def test_build_count_rule_candidate_keeps_ai_draft_sql_in_blocked_result(self):
         module = load_module()
@@ -188,13 +199,91 @@ class QualityRuleGapScannerTests(unittest.TestCase):
             },
         }
 
-        with mock.patch.object(module, "call_ai_candidate", return_value=(None, ai_meta)):
-            result = module.build_count_rule_candidate("dwd", table, {}, ods_table_by_dest)
+        with mock.patch.object(module, "infer_source_check_field", return_value=None):
+            with mock.patch.object(module, "call_ai_candidate", return_value=(None, ai_meta)):
+                result = module.build_count_rule_candidate("dwd", table, {}, ods_table_by_dest)
 
         self.assertEqual(result["status"], "blocked")
         self.assertIn("AI状态=ai_output_inconsistent_fields", result["reason"])
         self.assertIn("create_at", result["src_sql"])
         self.assertIn("etl_create_time", result["dest_sql"])
+
+    def test_build_validation_window_uses_rolling_last_24_hours(self):
+        module = load_module()
+
+        class FixedDatetime(datetime):
+            @classmethod
+            def now(cls):
+                return cls(2026, 6, 5, 14, 30, 45, 123456)
+
+        with mock.patch.object(module, "datetime", FixedDatetime):
+            begin, end = module.build_validation_window()
+
+        self.assertEqual(begin, "2026-06-04 14:30:45")
+        self.assertEqual(end, "2026-06-05 14:30:45")
+
+    def test_validate_candidate_sql_returns_mismatched_when_values_differ(self):
+        fake_cursor = FakeCursor([[{"cnt": 3}], [{"cnt": 5}]])
+        module = load_module()
+        candidate = {
+            "src_sql": "SELECT COUNT(*) AS cnt FROM ods.a WHERE create_at >= '{begin}' AND create_at < '{end}'",
+            "dest_sql": "SELECT COUNT(*) AS cnt FROM dwd.b WHERE fee_finish_at >= '{begin}' AND fee_finish_at < '{end}'",
+        }
+
+        result = module.validate_candidate_sql(fake_cursor, candidate)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["validation_status"], "mismatched")
+        self.assertEqual(result["src_value"], 3)
+        self.assertEqual(result["dest_value"], 5)
+
+    def test_finalize_candidate_with_validation_retries_ai_once_on_mismatch(self):
+        fake_cursor = FakeCursor([[{"cnt": 3}], [{"cnt": 5}], [{"cnt": 3}], [{"cnt": 3}]])
+        fake_conn = FakeConnection(fake_cursor)
+        module = load_module(fake_get_db_connection=mock.MagicMock(return_value=fake_conn))
+        working_table = {
+            "src_db": "ods",
+            "src_tbl": "ods_repay_cpop_income_item",
+            "dest_db": "dwd_sec",
+            "dest_tbl": "dwd_cst_pay_cost_detail",
+            "source_columns": ["create_at", "order_no"],
+            "dest_columns": ["fee_finish_at", "etl_create_time", "order_no"],
+        }
+        candidate = {
+            "name": "cnt",
+            "src_db": "ods",
+            "src_tbl": "ods_repay_cpop_income_item",
+            "dest_db": "dwd_sec",
+            "dest_tbl": "dwd_cst_pay_cost_detail",
+            "src_sql": "SELECT COUNT(DISTINCT order_no) AS cnt FROM ods.ods_repay_cpop_income_item WHERE create_at >= '{begin}' AND create_at < '{end}'",
+            "dest_sql": "SELECT COUNT(*) AS cnt FROM dwd_sec.dwd_cst_pay_cost_detail WHERE fee_finish_at >= '{begin}' AND fee_finish_at < '{end}'",
+            "src_check_field": "create_at",
+            "dest_check_field": "fee_finish_at",
+            "ai_reason": "first",
+            "git_matches": [],
+        }
+        retry_candidate = {
+            **candidate,
+            "dest_sql": "SELECT COUNT(DISTINCT order_no) AS cnt FROM dwd_sec.dwd_cst_pay_cost_detail WHERE fee_finish_at >= '{begin}' AND fee_finish_at < '{end}'",
+            "ai_reason": "retry fixed it",
+        }
+
+        with mock.patch.object(module, "call_ai_candidate", return_value=(retry_candidate, {"status": "ok", "reason": "", "git_matches": []})):
+            result = module.finalize_candidate_with_validation(
+                "dwd_sec",
+                "dwd_cst_pay_cost_detail",
+                "dwd_sec",
+                candidate,
+                working_table,
+                git_roots=[],
+                cursor=fake_cursor,
+                base_reason="可自动生成规则",
+            )
+
+        self.assertEqual(result["status"], "candidate")
+        self.assertEqual(result["ai_retry_count"], 1)
+        self.assertEqual(result["validation_status"], "matched")
+        self.assertIn("AI 二次修正后通过真实校验", result["reason"])
 
     def test_build_count_rule_candidate_does_not_accept_cross_table_generic_source_etl_field(self):
         module = load_module()
@@ -605,8 +694,8 @@ class QualityRuleGapScannerTests(unittest.TestCase):
         self.assertEqual(params[0], "cnt")
         self.assertEqual(params[5], "dwd_user_member_log")
 
-    def test_validate_candidates_runs_explain_for_select_statements(self):
-        fake_cursor = FakeCursor([[], []])
+    def test_validate_candidates_executes_real_select_statements(self):
+        fake_cursor = FakeCursor([[{"cnt": 8}], [{"cnt": 8}]])
         fake_conn = FakeConnection(fake_cursor)
         module = load_module(fake_get_db_connection=mock.MagicMock(return_value=fake_conn))
         results = [
@@ -624,7 +713,7 @@ class QualityRuleGapScannerTests(unittest.TestCase):
 
         self.assertEqual(len(validation["passed"]), 1)
         self.assertEqual(len(validation["failed"]), 0)
-        self.assertTrue(fake_cursor.executed[0][0].startswith("EXPLAIN SELECT COUNT(*)"))
+        self.assertTrue(fake_cursor.executed[0][0].startswith("SELECT COUNT(*)"))
 
     def test_disable_auto_check_for_items_updates_exact_etl_table(self):
         fake_cursor = FakeCursor([[]])

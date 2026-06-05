@@ -262,6 +262,7 @@ def build_ai_messages(database_name, table, git_context, failure_reason):
         "source_ddl_summary": normalize_for_json(table.get("source_ddl_summary") or ""),
         "dest_ddl_summary": normalize_for_json(table.get("dest_ddl_summary") or ""),
         "failure_reason": failure_reason,
+        "validation_feedback": normalize_for_json(table.get("validation_feedback") or {}),
         "git_context": normalize_for_json(git_context),
         "good_examples": [
             {
@@ -337,6 +338,8 @@ def build_ai_messages(database_name, table, git_context, failure_reason):
             "只有在目标表不存在可确认的业务事件时间字段时，才允许退回 etl_create_time 或 etl_update_time，并在 reason 中说明原因。",
             "如果源表和目标表最终使用不同字段，也必须返回 src_check_field、dest_check_field、src_sql 和 dest_sql 草稿，并在 reason 中解释差异原因。",
             "如果无法完全确定，也返回最合理草稿，并在 reason 中简要说明依据。",
+            "如果 validation_feedback 明确指出上一版 SQL 虽然可运行但结果不一致，请优先根据该反馈修正校验口径，而不是重复输出相同 SQL。",
+            "如果 validation_feedback 明确指出某个字段不存在或不应使用，禁止再次输出该字段。",
         ],
     }
     # Keep the prompt ASCII-safe so remote HTTP/client stacks never try to

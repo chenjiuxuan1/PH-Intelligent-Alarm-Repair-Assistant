@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import os
 import re
 import sys
@@ -23,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from alert.db_config import get_db_connection
+from config.config import QUALITY_RULE_VALIDATION_CONFIG
 from core.quality_rule_ai_helper import generate_rule_candidate_with_ai
 
 
@@ -460,6 +461,88 @@ def fetch_table_ddl_summary(cursor, database_name, table_name):
     return str(ddl or "")
 
 
+def schema_summary(columns, ddl_summary, error_message=None):
+    parts = []
+    if columns:
+        parts.append(f"columns={', '.join(columns)}")
+    if ddl_summary:
+        compact = " ".join(str(ddl_summary).split())
+        parts.append(f"ddl={compact[:500]}")
+    if error_message:
+        parts.append(f"error={error_message}")
+    return "; ".join(parts)
+
+
+def validation_enabled():
+    return QUALITY_RULE_VALIDATION_CONFIG.get("enabled", True)
+
+
+def validation_window_hours():
+    hours = QUALITY_RULE_VALIDATION_CONFIG.get("window_hours", 24)
+    try:
+        hours = int(hours)
+    except Exception:
+        hours = 24
+    return max(hours, 1)
+
+
+def should_retry_ai_on_mismatch():
+    return QUALITY_RULE_VALIDATION_CONFIG.get("retry_with_ai_on_mismatch", True)
+
+
+def max_ai_retry_count():
+    try:
+        value = int(QUALITY_RULE_VALIDATION_CONFIG.get("max_ai_retries", 1))
+    except Exception:
+        value = 1
+    return max(value, 0)
+
+
+def coerce_scalar_row_value(rows):
+    if not rows:
+        return None
+    row = rows[0]
+    if isinstance(row, dict):
+        if not row:
+            return None
+        return next(iter(row.values()))
+    if isinstance(row, (list, tuple)):
+        return row[0] if row else None
+    return row
+
+
+def compute_metric_diff(src_value, dest_value):
+    try:
+        if src_value is None or dest_value is None:
+            return None
+        return float(dest_value) - float(src_value)
+    except Exception:
+        if str(src_value) == str(dest_value):
+            return 0
+        return None
+
+
+def split_sql_statements(sql_text, begin, end):
+    rendered = render_validation_sql(sql_text or "", begin, end)
+    return [item.strip() for item in rendered.split(";") if item.strip()]
+
+
+def execute_metric_sql(cursor, sql_text, begin, end):
+    statements = split_sql_statements(sql_text, begin, end)
+    if not statements:
+        raise ValueError("缺少待执行 SQL")
+
+    final_rows = None
+    for statement in statements:
+        cursor.execute(statement)
+        lowered = statement.lstrip().lower()
+        if lowered.startswith(("select ", "with ")):
+            final_rows = cursor.fetchall()
+    if final_rows is None:
+        raise ValueError("SQL 未返回最终结果集")
+    return coerce_scalar_row_value(final_rows), statements
+
+
 def enrich_ai_schema_context(table, cursor=None):
     table = deepcopy(table)
     own_conn = None
@@ -474,6 +557,8 @@ def enrich_ai_schema_context(table, cursor=None):
 
     try:
         raw_source_columns = parse_json_list(table.get("source_columns") or table.get("columns"))
+        source_schema_error = ""
+        dest_schema_error = ""
         if raw_source_columns:
             table["source_columns"] = raw_source_columns
         src_db = table.get("src_db")
@@ -482,14 +567,24 @@ def enrich_ai_schema_context(table, cursor=None):
         dest_tbl = table.get("dest_tbl") or table.get("tbl")
 
         if own_cursor is not None:
-            if not table.get("source_columns") and src_db and src_tbl:
-                table["source_columns"] = fetch_table_columns(own_cursor, src_db, src_tbl)
-            if src_db and src_tbl and not table.get("source_ddl_summary"):
-                table["source_ddl_summary"] = fetch_table_ddl_summary(own_cursor, src_db, src_tbl)
-            if dest_db and dest_tbl and not table.get("dest_columns"):
-                table["dest_columns"] = fetch_table_columns(own_cursor, dest_db, dest_tbl)
-            if dest_db and dest_tbl and not table.get("dest_ddl_summary"):
-                table["dest_ddl_summary"] = fetch_table_ddl_summary(own_cursor, dest_db, dest_tbl)
+            try:
+                if not table.get("source_columns") and src_db and src_tbl:
+                    table["source_columns"] = fetch_table_columns(own_cursor, src_db, src_tbl)
+                if src_db and src_tbl and not table.get("source_ddl_summary"):
+                    table["source_ddl_summary"] = fetch_table_ddl_summary(own_cursor, src_db, src_tbl)
+            except Exception as exc:
+                source_schema_error = str(exc)
+            try:
+                if dest_db and dest_tbl and not table.get("dest_columns"):
+                    table["dest_columns"] = fetch_table_columns(own_cursor, dest_db, dest_tbl)
+                if dest_db and dest_tbl and not table.get("dest_ddl_summary"):
+                    table["dest_ddl_summary"] = fetch_table_ddl_summary(own_cursor, dest_db, dest_tbl)
+            except Exception as exc:
+                dest_schema_error = str(exc)
+        table["source_schema_status"] = "ok" if table.get("source_columns") or table.get("source_ddl_summary") else ("error" if source_schema_error else "missing")
+        table["dest_schema_status"] = "ok" if table.get("dest_columns") or table.get("dest_ddl_summary") else ("error" if dest_schema_error else "missing")
+        table["source_schema_error"] = source_schema_error
+        table["dest_schema_error"] = dest_schema_error
         return table
     finally:
         if own_conn is not None:
@@ -574,15 +669,17 @@ def build_count_rule_candidate(database_name, table, rule_map, ods_table_by_dest
                 git_roots=git_roots,
             )
             if ai_candidate:
-                return {
-                    "status": "candidate",
-                    "rule_name": COUNT_RULE_NAME,
-                    "dest_tbl": target_table,
-                    "dest_db": ai_candidate.get("dest_db") or table.get("db"),
-                    "reason": f"AI 兜底生成 cnt 规则: {ai_candidate.get('ai_reason', enrich_error)}",
-                    "candidate": ai_candidate,
-                    "ai_status": ai_meta.get("status", ""),
-                }
+                return finalize_candidate_with_validation(
+                    database_name,
+                    target_table,
+                    ai_candidate.get("dest_db") or table.get("db"),
+                    ai_candidate,
+                    ai_table,
+                    git_roots=git_roots,
+                    cursor=cursor,
+                    base_reason=f"AI 兜底生成规则: {ai_candidate.get('ai_reason', enrich_error)}",
+                    ai_status=ai_meta.get("status", ""),
+                )
             return blocked_result_with_ai_draft(
                 ai_table,
                 target_table,
@@ -598,31 +695,6 @@ def build_count_rule_candidate(database_name, table, rule_map, ods_table_by_dest
         dest_check_field = infer_target_check_field(working_table, git_roots=git_roots)
         if source_field_looks_unreliable_for_count_rule(working_table, src_check_field):
             src_check_field = None
-        if src_check_field and dest_check_field and not count_rule_fields_are_consistent(src_check_field, dest_check_field):
-            ai_candidate, ai_meta = call_ai_candidate(
-                database_name,
-                working_table,
-                f"src_check_field/dest_check_field 不一致: {src_check_field} != {dest_check_field}",
-                git_roots=git_roots,
-            )
-            if ai_candidate:
-                return {
-                    "status": "candidate",
-                    "rule_name": COUNT_RULE_NAME,
-                    "dest_tbl": target_table,
-                    "dest_db": ai_candidate.get("dest_db") or working_table.get("dest_db") or working_table.get("db"),
-                    "reason": f"AI 兜底生成 cnt 规则: {ai_candidate.get('ai_reason', 'src_check_field/dest_check_field 不一致')}",
-                    "candidate": ai_candidate,
-                    "ai_status": ai_meta.get("status", ""),
-                }
-            return blocked_result_with_ai_draft(
-                working_table,
-                target_table,
-                working_table.get("dest_db") or working_table.get("db"),
-                ai_meta,
-                f"src_check_field/dest_check_field 不一致: {src_check_field} != {dest_check_field}",
-                fallback={"check_field": dest_check_field or ""},
-            )
         if not src_check_field or not dest_check_field:
             ai_candidate, ai_meta = call_ai_candidate(
                 database_name,
@@ -631,15 +703,17 @@ def build_count_rule_candidate(database_name, table, rule_map, ods_table_by_dest
                 git_roots=git_roots,
             )
             if ai_candidate:
-                return {
-                    "status": "candidate",
-                    "rule_name": COUNT_RULE_NAME,
-                    "dest_tbl": target_table,
-                    "dest_db": ai_candidate.get("dest_db") or working_table.get("dest_db") or working_table.get("db"),
-                    "reason": f"AI 兜底生成 cnt 规则: {ai_candidate.get('ai_reason', '无法推断 src_check_field/dest_check_field')}",
-                    "candidate": ai_candidate,
-                    "ai_status": ai_meta.get("status", ""),
-                }
+                return finalize_candidate_with_validation(
+                    database_name,
+                    target_table,
+                    ai_candidate.get("dest_db") or working_table.get("dest_db") or working_table.get("db"),
+                    ai_candidate,
+                    working_table,
+                    git_roots=git_roots,
+                    cursor=cursor,
+                    base_reason=f"AI 兜底生成规则: {ai_candidate.get('ai_reason', '无法推断 src_check_field/dest_check_field')}",
+                    ai_status=ai_meta.get("status", ""),
+                )
             return blocked_result_with_ai_draft(
                 working_table,
                 target_table,
@@ -662,15 +736,17 @@ def build_count_rule_candidate(database_name, table, rule_map, ods_table_by_dest
             git_roots=git_roots,
         )
         if ai_candidate:
-            return {
-                "status": "candidate",
-                "rule_name": COUNT_RULE_NAME,
-                    "dest_tbl": target_table,
-                    "dest_db": ai_candidate.get("dest_db") or working_table.get("dest_db") or working_table.get("db"),
-                    "reason": f"AI 兜底生成 cnt 规则: {ai_candidate.get('ai_reason', '无法获取 src_db')}",
-                    "candidate": ai_candidate,
-                    "ai_status": ai_meta.get("status", ""),
-                }
+            return finalize_candidate_with_validation(
+                database_name,
+                target_table,
+                ai_candidate.get("dest_db") or working_table.get("dest_db") or working_table.get("db"),
+                ai_candidate,
+                working_table,
+                git_roots=git_roots,
+                cursor=cursor,
+                base_reason=f"AI 兜底生成规则: {ai_candidate.get('ai_reason', '无法获取 src_db')}",
+                ai_status=ai_meta.get("status", ""),
+            )
         return blocked_result_with_ai_draft(
             working_table,
             target_table,
@@ -697,15 +773,17 @@ def build_count_rule_candidate(database_name, table, rule_map, ods_table_by_dest
             git_roots=git_roots,
         )
         if ai_candidate:
-            return {
-                "status": "candidate",
-                "rule_name": COUNT_RULE_NAME,
-                    "dest_tbl": target_table,
-                    "dest_db": ai_candidate.get("dest_db") or target_db,
-                    "reason": f"AI 兜底生成 cnt 规则: {ai_candidate.get('ai_reason', '无法构造 src_sql/dest_sql')}",
-                    "candidate": ai_candidate,
-                    "ai_status": ai_meta.get("status", ""),
-                }
+            return finalize_candidate_with_validation(
+                database_name,
+                target_table,
+                ai_candidate.get("dest_db") or target_db,
+                ai_candidate,
+                working_table,
+                git_roots=git_roots,
+                cursor=cursor,
+                base_reason=f"AI 兜底生成规则: {ai_candidate.get('ai_reason', '无法构造 src_sql/dest_sql')}",
+                ai_status=ai_meta.get("status", ""),
+            )
         return blocked_result_with_ai_draft(
             working_table,
             target_table,
@@ -730,14 +808,16 @@ def build_count_rule_candidate(database_name, table, rule_map, ods_table_by_dest
         "dest_check_field": dest_check_field,
         "git_matches": working_table.get("git_matches", []),
     }
-    return {
-        "status": "candidate",
-        "rule_name": COUNT_RULE_NAME,
-        "dest_tbl": target_table,
-        "dest_db": target_db,
-        "reason": "可自动生成 cnt 规则",
-        "candidate": candidate,
-    }
+    return finalize_candidate_with_validation(
+        database_name,
+        target_table,
+        target_db,
+        candidate,
+        working_table,
+        git_roots=git_roots,
+        cursor=cursor,
+        base_reason="可自动生成规则",
+    )
 
 
 def call_ai_candidate(database_name, table, failure_reason, git_roots=None):
@@ -753,6 +833,214 @@ def call_ai_candidate(database_name, table, failure_reason, git_roots=None):
     if result:
         return result, {"status": "ok", "reason": "", "git_matches": [], "attempted": True}
     return None, {"status": "not_called", "reason": "", "git_matches": [], "attempted": False}
+
+
+def build_validation_feedback(candidate, validation_result):
+    return {
+        "previous_src_check_field": candidate.get("src_check_field") or "",
+        "previous_dest_check_field": candidate.get("dest_check_field") or "",
+        "previous_src_sql": candidate.get("src_sql") or "",
+        "previous_dest_sql": candidate.get("dest_sql") or "",
+        "validation_status": validation_result.get("validation_status") or "",
+        "src_value": validation_result.get("src_value"),
+        "dest_value": validation_result.get("dest_value"),
+        "diff": validation_result.get("diff"),
+        "validation_error": validation_result.get("validation_error") or "",
+        "validation_window_begin": validation_result.get("validation_window_begin") or "",
+        "validation_window_end": validation_result.get("validation_window_end") or "",
+    }
+
+
+def format_validation_reason(validation_result):
+    status = validation_result.get("validation_status") or "unknown"
+    if status == "matched":
+        return "SQL 可运行且校验结果一致"
+    if status == "mismatched":
+        return (
+            f"SQL 可运行但结果不一致: src_value={validation_result.get('src_value')} "
+            f"dest_value={validation_result.get('dest_value')} diff={validation_result.get('diff')}"
+        )
+    return f"无法完成真实校验: {validation_result.get('validation_error') or validation_result.get('reason') or 'unknown'}"
+
+
+def wrap_result_with_database(item, database_name, country=None):
+    wrapped = {"database": database_name, **item}
+    if country:
+        wrapped["country"] = country
+    return wrapped
+
+
+def blocked_result_with_candidate(database_name, target_table, target_db, candidate, validation_result, reason, country=None, ai_status=""):
+    result = {
+        "status": "blocked",
+        "rule_name": candidate.get("name", COUNT_RULE_NAME),
+        "dest_tbl": target_table,
+        "dest_db": target_db,
+        "src_db": candidate.get("src_db", ""),
+        "src_tbl": candidate.get("src_tbl", ""),
+        "src_sql": candidate.get("src_sql", ""),
+        "dest_sql": candidate.get("dest_sql", ""),
+        "check_field": candidate.get("dest_check_field") or candidate.get("check_field") or "",
+        "git_matches": candidate.get("git_matches", []),
+        "reason": reason,
+        "candidate": candidate,
+        "validation_status": validation_result.get("validation_status"),
+        "validation_reason": validation_result.get("reason", ""),
+        "validation_error": validation_result.get("validation_error", ""),
+        "validation_window_begin": validation_result.get("validation_window_begin"),
+        "validation_window_end": validation_result.get("validation_window_end"),
+        "src_value": validation_result.get("src_value"),
+        "dest_value": validation_result.get("dest_value"),
+        "diff": validation_result.get("diff"),
+        "ai_status": ai_status or validation_result.get("ai_status", ""),
+    }
+    return wrap_result_with_database(result, database_name, country=country)
+
+
+def maybe_retry_candidate_with_ai(database_name, working_table, candidate, validation_result, git_roots=None):
+    if not should_retry_ai_on_mismatch():
+        return None, {"status": "ai_retry_disabled", "reason": "未启用 AI 二次修正"}
+    if validation_result.get("validation_status") != "mismatched":
+        return None, {"status": "ai_retry_not_needed", "reason": "仅在结果不一致时触发 AI 二次修正"}
+    if max_ai_retry_count() <= 0:
+        return None, {"status": "ai_retry_disabled", "reason": "AI 二次修正次数为 0"}
+
+    retry_table = enrich_ai_schema_context(
+        {
+            **working_table,
+            "validation_feedback": build_validation_feedback(candidate, validation_result),
+        }
+    )
+    retry_reason = (
+        "上一版 SQL 可执行但结果不一致，请根据真实结果、表结构和 Git 片段重新生成更合理的单指标校验 SQL。"
+    )
+    retry_candidate, retry_meta = call_ai_candidate(
+        database_name,
+        retry_table,
+        retry_reason,
+        git_roots=git_roots,
+    )
+    return retry_candidate, retry_meta
+
+
+def finalize_candidate_with_validation(database_name, target_table, target_db, candidate, working_table, git_roots=None, cursor=None, country=None, base_reason="可自动生成规则", ai_status=""):
+    result = {
+        "status": "candidate",
+        "rule_name": candidate.get("name", COUNT_RULE_NAME),
+        "dest_tbl": target_table,
+        "dest_db": target_db,
+        "reason": base_reason,
+        "candidate": candidate,
+        "ai_status": ai_status,
+    }
+    result = wrap_result_with_database(result, database_name, country=country)
+    if not validation_enabled():
+        result["validation_status"] = "skipped"
+        result["validation_reason"] = "未启用真实校验"
+        return result
+
+    own_conn = None
+    validation_cursor = cursor
+    if validation_cursor is None:
+        own_conn = get_db_connection()
+        validation_cursor = own_conn.cursor()
+    try:
+        validation_result = validate_candidate_sql(validation_cursor, candidate)
+    finally:
+        if own_conn is not None:
+            own_conn.close()
+    result.update(
+        {
+            "validation_status": validation_result.get("validation_status"),
+            "validation_reason": validation_result.get("reason", ""),
+            "validation_error": validation_result.get("validation_error", ""),
+            "validation_window_begin": validation_result.get("validation_window_begin"),
+            "validation_window_end": validation_result.get("validation_window_end"),
+            "src_value": validation_result.get("src_value"),
+            "dest_value": validation_result.get("dest_value"),
+            "diff": validation_result.get("diff"),
+        }
+    )
+    if validation_result.get("validation_status") == "matched":
+        result["reason"] = f"{base_reason}; {format_validation_reason(validation_result)}"
+        return result
+
+    if validation_result.get("validation_status") == "validation_failed":
+        return blocked_result_with_candidate(
+            database_name,
+            target_table,
+            target_db,
+            candidate,
+            validation_result,
+            f"{base_reason}; SR 校验失败，需人工验证: {validation_result.get('reason', '')}",
+            country=country,
+            ai_status=ai_status,
+        )
+
+    retry_candidate, retry_meta = maybe_retry_candidate_with_ai(
+        database_name,
+        working_table,
+        candidate,
+        validation_result,
+        git_roots=git_roots,
+    )
+    if retry_candidate:
+        own_retry_conn = None
+        retry_cursor = cursor
+        if retry_cursor is None:
+            own_retry_conn = get_db_connection()
+            retry_cursor = own_retry_conn.cursor()
+        try:
+            retry_validation = validate_candidate_sql(retry_cursor, retry_candidate)
+        finally:
+            if own_retry_conn is not None:
+                own_retry_conn.close()
+        if retry_validation.get("validation_status") == "matched":
+            retried = {
+                "status": "candidate",
+                "rule_name": retry_candidate.get("name", COUNT_RULE_NAME),
+                "dest_tbl": target_table,
+                "dest_db": target_db,
+                "reason": f"AI 二次修正后通过真实校验: {retry_candidate.get('ai_reason', retry_validation.get('reason', ''))}",
+                "candidate": retry_candidate,
+                "ai_status": retry_meta.get("status", ""),
+                "validation_status": retry_validation.get("validation_status"),
+                "validation_reason": retry_validation.get("reason", ""),
+                "validation_error": retry_validation.get("validation_error", ""),
+                "validation_window_begin": retry_validation.get("validation_window_begin"),
+                "validation_window_end": retry_validation.get("validation_window_end"),
+                "src_value": retry_validation.get("src_value"),
+                "dest_value": retry_validation.get("dest_value"),
+                "diff": retry_validation.get("diff"),
+                "ai_retry_count": 1,
+            }
+            return wrap_result_with_database(retried, database_name, country=country)
+        retry_reason = retry_candidate.get("ai_reason") or retry_validation.get("reason") or retry_meta.get("reason", "")
+        blocked = blocked_result_with_candidate(
+            database_name,
+            target_table,
+            target_db,
+            retry_candidate,
+            retry_validation,
+            f"SQL 可运行但结果不一致，需人工验证；AI 二次修正后仍未通过: {retry_reason}",
+            country=country,
+            ai_status=retry_meta.get("status", ""),
+        )
+        blocked["ai_retry_count"] = 1
+        return blocked
+
+    blocked = blocked_result_with_candidate(
+        database_name,
+        target_table,
+        target_db,
+        candidate,
+        validation_result,
+        f"SQL 可运行但结果不一致，需人工验证；AI 二次修正未成功: {retry_meta.get('status', '')} {retry_meta.get('reason', '')}".strip(),
+        country=country,
+        ai_status=retry_meta.get("status", ""),
+    )
+    blocked["ai_retry_count"] = 1 if max_ai_retry_count() > 0 else 0
+    return blocked
 
 
 def blocked_result_with_ai_draft(table, target_table, target_db, ai_meta, default_reason, fallback=None):
@@ -771,6 +1059,7 @@ def blocked_result_with_ai_draft(table, target_table, target_db, ai_meta, defaul
         "git_matches": draft.get("git_matches") or fallback.get("git_matches", []) or table.get("git_matches", []) or ai_meta.get("git_matches", []),
         "reason": f"{default_reason}; AI状态={ai_meta.get('status', 'not_called')} {ai_meta.get('reason', '')}".strip(),
         "ai_status": ai_meta.get("status", ""),
+        "validation_status": "not_validated",
     }
 
 
@@ -891,10 +1180,8 @@ def apply_candidates(results):
 
 
 def build_validation_window():
-    from datetime import datetime, timedelta
-
-    end = datetime.now().replace(minute=0, second=0, microsecond=0)
-    begin = end - timedelta(days=1)
+    end = datetime.now().replace(microsecond=0)
+    begin = end - timedelta(hours=validation_window_hours())
     return begin.strftime("%Y-%m-%d %H:%M:%S"), end.strftime("%Y-%m-%d %H:%M:%S")
 
 
@@ -904,32 +1191,37 @@ def render_validation_sql(sql_text, begin, end):
 
 def validate_candidate_sql(cursor, candidate):
     begin, end = build_validation_window()
-    statements = [
-        item.strip()
-        for item in render_validation_sql(candidate.get("src_sql", ""), begin, end).split(";")
-        if item.strip()
-    ]
-    statements.extend(
-        item.strip()
-        for item in render_validation_sql(candidate.get("dest_sql", ""), begin, end).split(";")
-        if item.strip()
-    )
-    if not statements:
-        return {"ok": False, "reason": "缺少待验证 SQL"}
+    try:
+        src_value, src_statements = execute_metric_sql(cursor, candidate.get("src_sql", ""), begin, end)
+        dest_value, dest_statements = execute_metric_sql(cursor, candidate.get("dest_sql", ""), begin, end)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "reason": f"SQL 真实校验失败: {exc}",
+            "validation_status": "validation_failed",
+            "validation_error": str(exc),
+            "validation_window_begin": begin,
+            "validation_window_end": end,
+            "src_value": None,
+            "dest_value": None,
+            "diff": None,
+        }
 
-    for statement in statements:
-        lowered = statement.lower()
-        try:
-            if lowered.startswith("set "):
-                cursor.execute(statement)
-            elif lowered.startswith("select "):
-                cursor.execute(f"EXPLAIN {statement}")
-                cursor.fetchall()
-            else:
-                cursor.execute(statement)
-        except Exception as exc:
-            return {"ok": False, "reason": f"SQL 验证失败: {exc}"}
-    return {"ok": True, "reason": "SQL 校验通过"}
+    diff = compute_metric_diff(src_value, dest_value)
+    matched = str(src_value) == str(dest_value)
+    return {
+        "ok": matched,
+        "reason": "SQL 可运行且两边结果一致" if matched else f"SQL 可运行但结果不一致: src_value={src_value} dest_value={dest_value} diff={diff}",
+        "validation_status": "matched" if matched else "mismatched",
+        "validation_error": "",
+        "validation_window_begin": begin,
+        "validation_window_end": end,
+        "src_value": src_value,
+        "dest_value": dest_value,
+        "diff": diff,
+        "src_statements": src_statements,
+        "dest_statements": dest_statements,
+    }
 
 
 def validate_candidates(results):

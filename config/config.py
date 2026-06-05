@@ -311,6 +311,14 @@ QUALITY_RULE_AI_CONFIG = {
 }
 
 
+QUALITY_RULE_VALIDATION_CONFIG = {
+    "enabled": _get_env("QUALITY_RULE_VALIDATION_ENABLED", "1") == "1",
+    "retry_with_ai_on_mismatch": _get_env("QUALITY_RULE_VALIDATION_AI_RETRY_ENABLED", "1") == "1",
+    "max_ai_retries": int(_get_env("QUALITY_RULE_VALIDATION_MAX_AI_RETRIES", "1")),
+    "window_hours": int(_get_env("QUALITY_RULE_VALIDATION_WINDOW_HOURS", "24")),
+}
+
+
 REPAIR_CONFIG = {
     "scan_lookback_days": int(_get_env("SCAN_LOOKBACK_DAYS", "8")),
     "priority_workflow_codes": json.loads(_get_env("PRIORITY_WORKFLOW_CODES_JSON", "[]")),
