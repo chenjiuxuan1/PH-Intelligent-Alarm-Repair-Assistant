@@ -772,6 +772,69 @@ class QualityRuleGapScannerTests(unittest.TestCase):
         self.assertEqual(results[0]["status"], "candidate")
         self.assertTrue(fake_conn.closed)
 
+    def test_list_pending_generation_tables_excludes_existing_rules(self):
+        fake_cursor = FakeCursor(
+            [
+                [
+                    {"id": 1, "db": "dwd", "tbl": "dwd_has_rule", "monitor_level": 3, "is_auto_check": 1},
+                    {"id": 2, "db": "dwd", "tbl": "dwd_needs_rule", "monitor_level": 3, "is_auto_check": 1},
+                ],
+                [
+                    {"dest_db": "dwd", "dest_tbl": "dwd_has_rule", "name": "cnt"},
+                ],
+            ]
+        )
+        fake_conn = FakeConnection(fake_cursor)
+        module = load_module(fake_get_db_connection=mock.MagicMock(return_value=fake_conn))
+
+        results = module.list_pending_generation_tables(databases=["dwd"])
+
+        self.assertEqual(
+            results,
+            [
+                {
+                    "database": "dwd",
+                    "tbl": "dwd_needs_rule",
+                    "dest_db": "dwd",
+                    "rule_name": "cnt",
+                    "status": "pending_generation",
+                    "reason": "缺少 cnt 规则，待进入自动生成",
+                    "monitor_level": 3,
+                }
+            ],
+        )
+
+    def test_list_pending_generation_tables_skips_ineligible_ods_tables(self):
+        fake_cursor = FakeCursor(
+            [
+                [
+                    {"dest_db": "ods", "dest_tbl": "ods_no_pk", "pk": None, "dest_tbl_partition_field": None, "monitor_level": 1},
+                    {"dest_db": "ods", "dest_tbl": "ods_partitioned", "pk": "id", "dest_tbl_partition_field": "dt", "monitor_level": 1},
+                    {"dest_db": "ods", "dest_tbl": "ods_ok", "pk": "id", "dest_tbl_partition_field": None, "monitor_level": 2},
+                ],
+                [],
+            ]
+        )
+        fake_conn = FakeConnection(fake_cursor)
+        module = load_module(fake_get_db_connection=mock.MagicMock(return_value=fake_conn))
+
+        results = module.list_pending_generation_tables(databases=["ods"])
+
+        self.assertEqual(
+            results,
+            [
+                {
+                    "database": "ods",
+                    "tbl": "ods_ok",
+                    "dest_db": "ods",
+                    "rule_name": "cnt",
+                    "status": "pending_generation",
+                    "reason": "缺少 cnt 规则，待进入自动生成",
+                    "monitor_level": 2,
+                }
+            ],
+        )
+
     def test_main_json_output_serializes_datetime_values(self):
         module = load_module()
         fake_results = [

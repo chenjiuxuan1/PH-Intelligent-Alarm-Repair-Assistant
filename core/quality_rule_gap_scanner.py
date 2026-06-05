@@ -790,6 +790,44 @@ def load_tables(cursor, database_name, monitor_level=None):
     return fetch_rows(cursor, sql, tuple(params))
 
 
+def list_pending_generation_tables(databases=None, monitor_level=None):
+    databases = tuple(databases or SUPPORTED_DATABASES)
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            items = []
+            for database_name in databases:
+                tables = load_tables(cursor, database_name, monitor_level=monitor_level)
+                rule_map = load_quality_rules(cursor, database_name)
+                rule_name = resolve_rule_name(database_name)
+                for table in tables:
+                    target_table = table["dest_tbl"] if database_name in ("ods", "ods_security") else table["tbl"]
+                    if rule_map.get(target_table, {}).get(rule_name):
+                        continue
+                    if database_name in ("ods", "ods_security"):
+                        if table.get("pk") is None:
+                            continue
+                        if table.get("dest_tbl_partition_field") is not None:
+                            continue
+                        dest_db = table.get("dest_db") or database_name
+                    else:
+                        dest_db = table.get("db") or database_name
+                    items.append(
+                        {
+                            "database": database_name,
+                            "tbl": target_table,
+                            "dest_db": dest_db,
+                            "rule_name": rule_name,
+                            "status": "pending_generation",
+                            "reason": f"缺少 {rule_name} 规则，待进入自动生成",
+                            "monitor_level": table.get("monitor_level"),
+                        }
+                    )
+            return items
+    finally:
+        conn.close()
+
+
 def build_count_rule_candidate(database_name, table, rule_map, ods_table_by_dest, git_roots=None, cursor=None):
     target_table = table["dest_tbl"] if database_name in ("ods", "ods_security") else table["tbl"]
     existing_rule = rule_map.get(target_table, {}).get(COUNT_RULE_NAME)
