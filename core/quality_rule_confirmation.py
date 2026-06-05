@@ -151,11 +151,12 @@ def merge_candidates_into_backlog(results, backlog=None, detected_at=None):
     backlog = backlog or load_backlog()
     items = backlog.setdefault("items", {})
     new_items = []
+    refreshable_statuses = {"pending_confirmation", "candidate", "blocked", ""}
     for item in results:
         key = build_candidate_key(item)
         if item.get("status") in {"existing", "skipped"}:
             existing = items.get(key)
-            if existing and existing.get("status") == "pending_confirmation":
+            if existing and existing.get("status") in refreshable_statuses:
                 existing["status"] = item.get("status")
                 existing["reason"] = item.get("reason", existing.get("reason", ""))
                 existing["scan_status"] = item.get("status")
@@ -169,7 +170,7 @@ def merge_candidates_into_backlog(results, backlog=None, detected_at=None):
             continue
 
         existing = items[key]
-        if existing.get("status") == "pending_confirmation":
+        if existing.get("status") in refreshable_statuses:
             preserved = {
                 "notified_at": existing.get("notified_at"),
                 "form_submitted_at": existing.get("form_submitted_at"),

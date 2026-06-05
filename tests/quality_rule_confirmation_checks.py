@@ -185,6 +185,38 @@ class QualityRuleConfirmationTests(unittest.TestCase):
         self.assertEqual(backlog["items"][key]["reason"], "AI 与规则推断都失败")
         self.assertEqual(backlog["items"][key]["rescan_at"], "2026-06-04 12:10:00")
 
+    def test_merge_candidates_into_backlog_refreshes_legacy_blocked_item_with_latest_sql(self):
+        module, _ = load_module()
+        original = module.candidate_to_backlog_item(self.make_candidate_result(), detected_at="2026-06-04 12:00:00")
+        original["status"] = "blocked"
+        original["src_sql"] = "select old_src"
+        original["dest_sql"] = "select old_dest"
+        original["check_field"] = "etl_create_time"
+        original["reason"] = "无法推断 src_check_field/dest_check_field"
+        backlog = {"items": {original["candidate_key"]: original}}
+
+        updated = self.make_candidate_result()
+        updated["status"] = "blocked"
+        updated["reason"] = "AI 生成了新的业务时间口径"
+        updated["candidate"]["src_sql"] = "select new_src"
+        updated["candidate"]["dest_sql"] = "select new_dest"
+        updated["candidate"]["check_field"] = "input_date"
+
+        backlog, new_items = module.merge_candidates_into_backlog(
+            [updated],
+            backlog=backlog,
+            detected_at="2026-06-04 12:10:00",
+        )
+
+        self.assertEqual(new_items, [])
+        refreshed = backlog["items"][original["candidate_key"]]
+        self.assertEqual(refreshed["status"], "pending_confirmation")
+        self.assertEqual(refreshed["scan_status"], "blocked")
+        self.assertEqual(refreshed["src_sql"], "select new_src")
+        self.assertEqual(refreshed["dest_sql"], "select new_dest")
+        self.assertEqual(refreshed["check_field"], "input_date")
+        self.assertEqual(refreshed["reason"], "AI 生成了新的业务时间口径")
+
     def test_merge_candidates_into_backlog_adds_new_blocked_item_for_manual_follow_up(self):
         module, _ = load_module()
         blocked = {
