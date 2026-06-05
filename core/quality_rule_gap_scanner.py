@@ -19,11 +19,13 @@ import re
 import sys
 from copy import deepcopy
 from pathlib import Path
+import urllib.error
+import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from alert.db_config import get_db_connection
-from config.config import QUALITY_RULE_VALIDATION_CONFIG
+from config.config import QUALITY_RULE_FORM_CONFIG, QUALITY_RULE_VALIDATION_CONFIG
 from core.quality_rule_ai_helper import generate_rule_candidate_with_ai
 
 
@@ -527,6 +529,95 @@ def split_sql_statements(sql_text, begin, end):
     return [item.strip() for item in rendered.split(";") if item.strip()]
 
 
+def validation_backend():
+    return (QUALITY_RULE_VALIDATION_CONFIG.get("backend") or "sr_gateway").strip().lower()
+
+
+def sr_validation_base_url():
+    return (QUALITY_RULE_VALIDATION_CONFIG.get("sr_base_url") or "https://sr-box.kuainiu.io").rstrip("/")
+
+
+def sr_validation_token():
+    return QUALITY_RULE_VALIDATION_CONFIG.get("sr_token") or "fuxi_demo_token"
+
+
+def sr_validation_access_mode():
+    return QUALITY_RULE_VALIDATION_CONFIG.get("sr_access_mode") or "local"
+
+
+def sr_validation_timeout_sec():
+    return int(QUALITY_RULE_VALIDATION_CONFIG.get("sr_timeout_sec") or 60)
+
+
+def sr_validation_country(candidate=None):
+    if isinstance(candidate, dict):
+        if candidate.get("country"):
+            return str(candidate["country"]).strip().lower()
+        if candidate.get("database"):
+            pass
+    return str(QUALITY_RULE_FORM_CONFIG.get("country", "ph")).strip().lower()
+
+
+def request_sr_gateway_json(payload, timeout_sec=None):
+    timeout = timeout_sec or sr_validation_timeout_sec()
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        f"{sr_validation_base_url()}/api/rust/v1/sr-sandboxes/sql-executions",
+        data=body,
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {sr_validation_token()}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        error_text = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"SR Gateway HTTP {exc.code}: {error_text}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"SR Gateway unreachable: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise RuntimeError(f"SR Gateway timeout: {exc}") from exc
+
+    try:
+        data = json.loads(raw) if raw else {}
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"SR Gateway returned non-JSON response: {raw[:300]}") from exc
+
+    if isinstance(data, dict) and data.get("success") is False:
+        raise RuntimeError(data.get("message") or data.get("error") or "SR Gateway returned success=false")
+    return data
+
+
+def extract_rows_from_gateway_result(data):
+    if isinstance(data, list):
+        return data
+    if not isinstance(data, dict):
+        return []
+
+    for key in ("rows", "records", "list", "items"):
+        value = data.get(key)
+        if isinstance(value, list):
+            return value
+
+    nested = data.get("data")
+    if nested is not None and nested is not data:
+        rows = extract_rows_from_gateway_result(nested)
+        if rows:
+            return rows
+
+    result = data.get("result")
+    if result is not None and result is not data:
+        rows = extract_rows_from_gateway_result(result)
+        if rows:
+            return rows
+
+    return []
+
+
 def execute_metric_sql(cursor, sql_text, begin, end):
     statements = split_sql_statements(sql_text, begin, end)
     if not statements:
@@ -541,6 +632,39 @@ def execute_metric_sql(cursor, sql_text, begin, end):
     if final_rows is None:
         raise ValueError("SQL 未返回最终结果集")
     return coerce_scalar_row_value(final_rows), statements
+
+
+def execute_metric_sql_via_sr_gateway(sql_text, begin, end, country):
+    statements = split_sql_statements(sql_text, begin, end)
+    if not statements:
+        raise ValueError("缺少待执行 SQL")
+
+    final_rows = None
+    for statement in statements:
+        payload = {
+            "taskName": "quality-rule-validation",
+            "country": country,
+            "purpose": "agent",
+            "accessMode": sr_validation_access_mode(),
+            "sqlMode": "query",
+            "sql": statement,
+            "page": 1,
+            "pageSize": 100,
+            "timeoutSec": sr_validation_timeout_sec(),
+        }
+        response = request_sr_gateway_json(payload, timeout_sec=sr_validation_timeout_sec())
+        lowered = statement.lstrip().lower()
+        if lowered.startswith(("select ", "with ", "show ", "desc ", "describe ", "explain ")):
+            final_rows = extract_rows_from_gateway_result(response)
+    if final_rows is None:
+        raise ValueError("SQL 未返回最终结果集")
+    return coerce_scalar_row_value(final_rows), statements
+
+
+def execute_metric_sql_with_validation_backend(cursor, sql_text, begin, end, candidate=None):
+    if validation_backend() == "db":
+        return execute_metric_sql(cursor, sql_text, begin, end)
+    return execute_metric_sql_via_sr_gateway(sql_text, begin, end, sr_validation_country(candidate))
 
 
 def enrich_ai_schema_context(table, cursor=None):
@@ -941,7 +1065,7 @@ def finalize_candidate_with_validation(database_name, target_table, target_db, c
 
     own_conn = None
     validation_cursor = cursor
-    if validation_cursor is None:
+    if validation_backend() == "db" and validation_cursor is None:
         own_conn = get_db_connection()
         validation_cursor = own_conn.cursor()
     try:
@@ -987,7 +1111,7 @@ def finalize_candidate_with_validation(database_name, target_table, target_db, c
     if retry_candidate:
         own_retry_conn = None
         retry_cursor = cursor
-        if retry_cursor is None:
+        if validation_backend() == "db" and retry_cursor is None:
             own_retry_conn = get_db_connection()
             retry_cursor = own_retry_conn.cursor()
         try:
@@ -1192,8 +1316,12 @@ def render_validation_sql(sql_text, begin, end):
 def validate_candidate_sql(cursor, candidate):
     begin, end = build_validation_window()
     try:
-        src_value, src_statements = execute_metric_sql(cursor, candidate.get("src_sql", ""), begin, end)
-        dest_value, dest_statements = execute_metric_sql(cursor, candidate.get("dest_sql", ""), begin, end)
+        src_value, src_statements = execute_metric_sql_with_validation_backend(
+            cursor, candidate.get("src_sql", ""), begin, end, candidate=candidate
+        )
+        dest_value, dest_statements = execute_metric_sql_with_validation_backend(
+            cursor, candidate.get("dest_sql", ""), begin, end, candidate=candidate
+        )
     except Exception as exc:
         return {
             "ok": False,
@@ -1229,22 +1357,35 @@ def validate_candidates(results):
     if not candidate_items:
         return {"passed": [], "failed": []}
 
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cursor:
-            passed = []
-            failed = []
-            for item in candidate_items:
-                candidate = item["candidate"]
-                result = validate_candidate_sql(cursor, candidate)
-                wrapped = {**item, "candidate": candidate, **result}
-                if result["ok"]:
-                    passed.append(wrapped)
-                else:
-                    failed.append(wrapped)
-            return {"passed": passed, "failed": failed}
-    finally:
-        conn.close()
+    if validation_backend() == "db":
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cursor:
+                passed = []
+                failed = []
+                for item in candidate_items:
+                    candidate = item["candidate"]
+                    result = validate_candidate_sql(cursor, candidate)
+                    wrapped = {**item, "candidate": candidate, **result}
+                    if result["ok"]:
+                        passed.append(wrapped)
+                    else:
+                        failed.append(wrapped)
+                return {"passed": passed, "failed": failed}
+        finally:
+            conn.close()
+
+    passed = []
+    failed = []
+    for item in candidate_items:
+        candidate = item["candidate"]
+        result = validate_candidate_sql(None, candidate)
+        wrapped = {**item, "candidate": candidate, **result}
+        if result["ok"]:
+            passed.append(wrapped)
+        else:
+            failed.append(wrapped)
+    return {"passed": passed, "failed": failed}
 
 
 def disable_auto_check_for_items(items):

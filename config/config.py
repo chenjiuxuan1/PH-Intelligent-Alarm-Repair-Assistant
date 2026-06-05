@@ -316,6 +316,11 @@ QUALITY_RULE_VALIDATION_CONFIG = {
     "retry_with_ai_on_mismatch": _get_env("QUALITY_RULE_VALIDATION_AI_RETRY_ENABLED", "1") == "1",
     "max_ai_retries": int(_get_env("QUALITY_RULE_VALIDATION_MAX_AI_RETRIES", "1")),
     "window_hours": int(_get_env("QUALITY_RULE_VALIDATION_WINDOW_HOURS", "24")),
+    "backend": _get_env("QUALITY_RULE_VALIDATION_BACKEND", "sr_gateway"),
+    "sr_base_url": _get_env("QUALITY_RULE_SR_BASE_URL", _get_env("FUXI_BASE_URL", "https://sr-box.kuainiu.io")),
+    "sr_token": _get_env("QUALITY_RULE_SR_TOKEN", _get_env("FUXI_API_TOKEN", "fuxi_demo_token")),
+    "sr_access_mode": _get_env("QUALITY_RULE_SR_ACCESS_MODE", "local"),
+    "sr_timeout_sec": int(_get_env("QUALITY_RULE_SR_TIMEOUT_SEC", "60")),
 }
 
 

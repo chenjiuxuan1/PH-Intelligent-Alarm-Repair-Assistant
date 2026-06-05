@@ -26,6 +26,7 @@ def load_module(fake_get_db_connection=None):
         spec = importlib.util.spec_from_file_location("quality_rule_gap_scanner", str(MODULE_PATH))
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
+        module.QUALITY_RULE_VALIDATION_CONFIG["backend"] = "db"
         return module
     finally:
         if previous_alert is not None:
@@ -236,6 +237,45 @@ class QualityRuleGapScannerTests(unittest.TestCase):
         self.assertEqual(result["validation_status"], "mismatched")
         self.assertEqual(result["src_value"], 3)
         self.assertEqual(result["dest_value"], 5)
+
+    def test_validate_candidate_sql_uses_sr_gateway_backend_when_configured(self):
+        module = load_module()
+        module.QUALITY_RULE_VALIDATION_CONFIG["backend"] = "sr_gateway"
+        module.QUALITY_RULE_VALIDATION_CONFIG["sr_base_url"] = "https://sr-box.kuainiu.io"
+        module.QUALITY_RULE_VALIDATION_CONFIG["sr_token"] = "demo-token"
+        module.QUALITY_RULE_FORM_CONFIG["country"] = "ph"
+        candidate = {
+            "src_sql": "SELECT COUNT(*) AS cnt FROM ods.a WHERE create_at >= '{begin}' AND create_at < '{end}'",
+            "dest_sql": "SELECT COUNT(*) AS cnt FROM dwd.b WHERE fee_finish_at >= '{begin}' AND fee_finish_at < '{end}'",
+            "country": "ph",
+        }
+
+        responses = [
+            {"success": True, "data": {"rows": [{"cnt": 7}]}},
+            {"success": True, "data": {"rows": [{"cnt": 7}]}},
+        ]
+        with mock.patch.object(module, "request_sr_gateway_json", side_effect=responses) as mocked:
+            result = module.validate_candidate_sql(None, candidate)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["validation_status"], "matched")
+        self.assertEqual(mocked.call_count, 2)
+
+    def test_validate_candidate_sql_returns_validation_failed_when_sr_gateway_rejects(self):
+        module = load_module()
+        module.QUALITY_RULE_VALIDATION_CONFIG["backend"] = "sr_gateway"
+        candidate = {
+            "src_sql": "SELECT COUNT(*) AS cnt FROM ods.a WHERE create_at >= '{begin}' AND create_at < '{end}'",
+            "dest_sql": "SELECT COUNT(*) AS cnt FROM dwd.b WHERE fee_finish_at >= '{begin}' AND fee_finish_at < '{end}'",
+            "country": "ph",
+        }
+
+        with mock.patch.object(module, "request_sr_gateway_json", side_effect=RuntimeError("SR Gateway HTTP 403: denied")):
+            result = module.validate_candidate_sql(None, candidate)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["validation_status"], "validation_failed")
+        self.assertIn("SR Gateway HTTP 403", result["validation_error"])
 
     def test_finalize_candidate_with_validation_retries_ai_once_on_mismatch(self):
         fake_cursor = FakeCursor([[{"cnt": 3}], [{"cnt": 5}], [{"cnt": 3}], [{"cnt": 3}]])
