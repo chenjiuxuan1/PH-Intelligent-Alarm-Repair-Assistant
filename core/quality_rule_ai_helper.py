@@ -240,7 +240,9 @@ def normalize_for_json(value):
 def build_ai_messages(database_name, table, git_context, failure_reason):
     system_prompt = (
         "你是一个资深数仓数据质量规则生成助手。"
-        "请根据给定的源表、目标表、失败原因和一段 Git SQL 片段，生成一组可执行的 cnt 质量校验草稿。"
+        "请根据给定的源表、目标表、失败原因和一段 Git SQL 片段，生成一组可执行的单指标质量校验草稿。"
+        "你不局限于 count(*)，也可以使用 count(distinct ...)、sum(...)、按业务键过滤后的聚合等方式，"
+        "只要源表 SQL 与目标表 SQL 最终都输出一个可比较的数值结果即可。"
         "输出必须是严格 JSON，不要输出 Markdown，不要输出额外解释。"
     )
     raw_columns = table.get("source_columns")
@@ -249,7 +251,7 @@ def build_ai_messages(database_name, table, git_context, failure_reason):
     source_columns = normalize_for_json(raw_columns if raw_columns is not None else [])
     dest_columns = normalize_for_json(table.get("dest_columns") or [])
     payload = {
-        "task": "generate_count_rule_candidate",
+        "task": "generate_metric_rule_candidate",
         "database": database_name,
         "dest_db": table.get("dest_db") or table.get("db") or "",
         "dest_tbl": table.get("dest_tbl") or table.get("tbl") or "",
@@ -297,6 +299,18 @@ def build_ai_messages(database_name, table, git_context, failure_reason):
                     "dest_sql": "SELECT count(1) AS cnt FROM dwd_sec.dwd_cst_pay_cost_detail WHERE fee_finish_at >= '{begin}' AND fee_finish_at < '{end}'",
                     "reason": "目标表不存在 create_at，但存在业务完成时间 fee_finish_at，应优先使用真实存在且语义最接近的业务时间字段，而不是臆测 create_at。"
                 }
+            },
+            {
+                "scenario": "简单 count(*) 不能准确反映两边口径时，可以使用更贴近业务的单指标聚合，只要最终返回一个可比较的数值列",
+                "expected_output": {
+                    "src_db": "ods",
+                    "src_tbl": "ods_payment_order",
+                    "src_check_field": "pay_success_at",
+                    "dest_check_field": "fee_finish_at",
+                    "src_sql": "SELECT COUNT(DISTINCT order_no) AS cnt FROM ods.ods_payment_order WHERE pay_success_at >= '{begin}' AND pay_success_at < '{end}'",
+                    "dest_sql": "SELECT COUNT(DISTINCT order_no) AS cnt FROM dwd.dwd_payment_detail WHERE fee_finish_at >= '{begin}' AND fee_finish_at < '{end}'",
+                    "reason": "两边都可以按业务单号去重后做单指标校验；虽然事件字段名称不同，但都是真实存在且语义相近的业务完成时间。"
+                }
             }
         ],
         "output_schema": {
@@ -309,13 +323,14 @@ def build_ai_messages(database_name, table, git_context, failure_reason):
             "reason": "string",
         },
         "constraints": [
-            "生成的是 cnt 规则草稿，必须返回 src_sql 和 dest_sql。",
-            "优先从 git SQL 片段中识别源表、目标表和事件限制字段。",
-            "优先选择业务事件时间字段，例如 create_at、created_at、create_time、order_time 等。",
+            "生成的是单指标校验规则草稿，必须返回 src_sql 和 dest_sql，并且两边 SQL 都必须输出一个可比较的数值列，列别名统一为 cnt。",
+            "优先从 git SQL 片段中识别源表、目标表、业务键和事件限制字段。",
+            "优先选择业务事件时间字段，例如 create_at、created_at、create_time、order_time、finish_at、success_at 等。",
             "SQL 中如果使用时间窗口，必须保留 {begin} 和 {end} 占位符。",
             "src_check_field 必须真实存在于 source_columns 或 source_ddl_summary 或 Git 片段明确提到的源表字段中，否则禁止输出。",
             "dest_check_field 必须真实存在于 dest_columns 或 dest_ddl_summary 中，否则禁止输出。",
             "不要臆测源表存在 etl_create_time/etl_update_time，除非 Git 片段或 source_columns 明确出现。",
+            "如果简单 count(*) 不能合理校验两边数据，可以改用 count(distinct 业务键)、sum(金额)、或带业务过滤条件的单值聚合，但不要输出多列或明细结果。",
             "如果源表和目标表字段同语义，应优先给出相同字段名。",
             "如果 Git 片段或元数据表明源表和目标表都存在同一业务事件字段，必须优先使用同一个字段名，不要退回到目标表的 etl_create_time。",
             "如果目标表不存在同名业务时间字段，应优先选择 dest_columns 中真实存在且语义最接近的业务时间字段，例如 finish_at、paid_at、success_at、completed_at。",

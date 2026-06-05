@@ -25,7 +25,7 @@ class QualityRuleAiHelperTests(unittest.TestCase):
             "src_check_field/dest_check_field 不一致",
         )
         payload = json.loads(messages[1]["content"])
-        self.assertEqual(payload["task"], "generate_count_rule_candidate")
+        self.assertEqual(payload["task"], "generate_metric_rule_candidate")
         self.assertEqual(payload["dest_tbl"], "dwd_cst_pay_cost_detail")
         self.assertEqual(payload["src_tbl"], "ods_repay_cpop_income_item")
         self.assertEqual(payload["source_columns"], ["create_at"])
