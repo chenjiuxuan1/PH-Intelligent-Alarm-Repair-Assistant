@@ -340,20 +340,11 @@ def maybe_trace_langfuse(messages, response_text, parsed_output):
     return trace_langfuse_via_http(messages, response_text, parsed_output)
 
 
-def trace_langfuse_via_http(messages, response_text, parsed_output):
-    global _LAST_LANGFUSE_TRACE_ERROR
-    secret_key = QUALITY_RULE_AI_CONFIG.get("langfuse_secret_key")
-    public_key = QUALITY_RULE_AI_CONFIG.get("langfuse_public_key")
-    host = (QUALITY_RULE_AI_CONFIG.get("langfuse_base_url") or "").rstrip("/")
-    if not secret_key or not public_key or not host:
-        _LAST_LANGFUSE_TRACE_ERROR = "missing_langfuse_credentials"
-        return False
-
+def build_langfuse_ingestion_batch(messages, response_text, parsed_output):
     trace_id = uuid.uuid4().hex
     generation_id = uuid.uuid4().hex
     now = datetime.now(timezone.utc).isoformat()
-    basic = base64.b64encode(f"{public_key}:{secret_key}".encode("utf-8")).decode("ascii")
-    batch = {
+    return {
         "batch": [
             {
                 "id": uuid.uuid4().hex,
@@ -382,6 +373,29 @@ def trace_langfuse_via_http(messages, response_text, parsed_output):
             },
         ]
     }
+
+
+def export_langfuse_ingestion_batch(batch, export_path):
+    if not export_path:
+        return None
+    path = Path(export_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(batch, ensure_ascii=False, indent=2), encoding="utf-8")
+    _ai_debug(f"exported Langfuse batch to {path}")
+    return str(path)
+
+
+def trace_langfuse_via_http(messages, response_text, parsed_output):
+    global _LAST_LANGFUSE_TRACE_ERROR
+    secret_key = QUALITY_RULE_AI_CONFIG.get("langfuse_secret_key")
+    public_key = QUALITY_RULE_AI_CONFIG.get("langfuse_public_key")
+    host = (QUALITY_RULE_AI_CONFIG.get("langfuse_base_url") or "").rstrip("/")
+    if not secret_key or not public_key or not host:
+        _LAST_LANGFUSE_TRACE_ERROR = "missing_langfuse_credentials"
+        return False
+
+    basic = base64.b64encode(f"{public_key}:{secret_key}".encode("utf-8")).decode("ascii")
+    batch = build_langfuse_ingestion_batch(messages, response_text, parsed_output)
     req = urllib.request.Request(
         f"{host}/api/public/ingestion",
         data=json.dumps(batch, ensure_ascii=True).encode("utf-8"),
@@ -628,11 +642,15 @@ def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_ro
     draft_candidate = build_candidate_from_parsed_output(table, parsed, git_context)
     meta["draft_candidate"] = draft_candidate
     _LAST_LANGFUSE_TRACE_ERROR = ""
+    export_path = os.environ.get("QUALITY_RULE_LANGFUSE_EXPORT_PATH", "").strip()
     traced = maybe_trace_langfuse(messages, response_text, parsed)
     meta["trace_status"] = "ok" if traced else "langfuse_trace_failed"
     if not traced:
         meta["trace_reason"] = _LAST_LANGFUSE_TRACE_ERROR or "Langfuse trace 未成功写入"
         _ai_debug(f"langfuse trace failed: {meta['trace_reason']}")
+        if export_path:
+            batch = build_langfuse_ingestion_batch(messages, response_text, parsed)
+            meta["trace_export_path"] = export_langfuse_ingestion_batch(batch, export_path)
     else:
         _ai_debug("langfuse trace ok")
 

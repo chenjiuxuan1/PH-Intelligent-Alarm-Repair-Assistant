@@ -3,6 +3,7 @@ import sys
 import types
 import unittest
 from datetime import datetime
+from pathlib import Path
 from unittest import mock
 
 from core import quality_rule_ai_helper as module
@@ -265,6 +266,50 @@ class QualityRuleAiHelperTests(unittest.TestCase):
             self.assertEqual(meta["status"], "ai_request_failed")
             mocked_trace.assert_called_once()
         finally:
+            module.QUALITY_RULE_AI_CONFIG.clear()
+            module.QUALITY_RULE_AI_CONFIG.update(original)
+
+    def test_generate_rule_candidate_with_ai_exports_langfuse_batch_on_trace_failure(self):
+        original = dict(module.QUALITY_RULE_AI_CONFIG)
+        try:
+            module.QUALITY_RULE_AI_CONFIG.update(
+                {
+                    "enabled": True,
+                    "api_key": "dashscope-key",
+                    "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                    "model": "qwen3.6-plus",
+                    "langfuse_secret_key": "secret",
+                    "langfuse_public_key": "public",
+                    "langfuse_base_url": "https://langfuse.kuainiu.io",
+                }
+            )
+            fake_completion = mock.Mock()
+            fake_completion.choices = [mock.Mock(message=mock.Mock(content='{"src_db":"ods","src_tbl":"ods_x","src_check_field":"create_at","dest_check_field":"create_at","src_sql":"select 1","dest_sql":"select 2","reason":"ok"}'))]
+            fake_client = mock.Mock()
+            fake_client.chat.completions.create.return_value = fake_completion
+
+            fake_openai_module = types.ModuleType("openai")
+            fake_openai_module.OpenAI = mock.Mock(return_value=fake_client)
+
+            with mock.patch.dict(sys.modules, {"openai": fake_openai_module}):
+                with mock.patch.object(module, "maybe_trace_langfuse", return_value=False):
+                    with mock.patch.dict(module.os.environ, {"QUALITY_RULE_LANGFUSE_EXPORT_PATH": "/tmp/quality-langfuse-batch.json"}, clear=False):
+                        result, meta = module.generate_rule_candidate_with_ai(
+                            "dwd",
+                            {"tbl": "dwd_user_member_log", "dest_tbl": "dwd_user_member_log", "columns": '["create_at"]'},
+                            "missing fields",
+                            git_roots=[],
+                            return_meta=True,
+                        )
+
+            self.assertIsNotNone(result)
+            self.assertEqual(meta["trace_status"], "langfuse_trace_failed")
+            self.assertTrue(meta.get("trace_export_path"))
+            self.assertTrue(Path(meta["trace_export_path"]).exists())
+        finally:
+            exported = Path("/tmp/quality-langfuse-batch.json")
+            if exported.exists():
+                exported.unlink()
             module.QUALITY_RULE_AI_CONFIG.clear()
             module.QUALITY_RULE_AI_CONFIG.update(original)
 
