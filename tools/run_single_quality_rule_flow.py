@@ -22,6 +22,9 @@ from core.quality_rule_confirmation import (
     submit_backlog_items_to_form,
 )
 from core.quality_rule_gap_scanner import (
+    COUNT_RULE_DATABASES,
+    EXISTS_RULE_DATABASES,
+    build_exists_rule_candidate,
     build_count_rule_candidate,
     load_ods_table_by_dest,
     load_quality_rules,
@@ -82,6 +85,21 @@ def build_non_backlog_payload(database, table, result):
     }
 
 
+def load_single_table(cursor, database, table_name):
+    if database in {"ods", "ods_security"}:
+        cursor.execute(
+            "select * from wattrel_ods_table_settings where dest_db=%s and dest_tbl=%s limit 1",
+            (database, table_name),
+        )
+        return cursor.fetchone(), "wattrel_ods_table_settings"
+
+    cursor.execute(
+        "select * from wattrel_etl_table_settings where db=%s and tbl=%s limit 1",
+        (database, table_name),
+    )
+    return cursor.fetchone(), "wattrel_etl_table_settings"
+
+
 def main():
     args = parse_args()
     database = args.database
@@ -92,20 +110,16 @@ def main():
     conn = get_db_connection()
     try:
         cur = conn.cursor()
-        cur.execute(
-            "select * from wattrel_etl_table_settings where db=%s and tbl=%s limit 1",
-            (database, table_name),
-        )
-        table = cur.fetchone()
+        table, config_table_name = load_single_table(cur, database, table_name)
         if not table:
             result = {
                 "country": QUALITY_RULE_FORM_CONFIG.get("country", "ph"),
                 "database": database,
                 "status": "blocked",
-                "rule_name": "cnt",
+                "rule_name": "cnt" if database in COUNT_RULE_DATABASES else "if_exists",
                 "dest_tbl": table_name,
                 "dest_db": database,
-                "reason": "未在 wattrel_etl_table_settings 中查到表配置",
+                "reason": f"未在 {config_table_name} 中查到表配置",
                 "ai_status": "not_applicable",
                 "validation_status": "not_validated",
             }
@@ -113,14 +127,35 @@ def main():
             return 0
 
         rules = load_quality_rules(cur, database)
-        ods_map = load_ods_table_by_dest(cur)
-        raw_result = build_count_rule_candidate(
-            database,
-            table,
-            rules,
-            ods_map,
-            git_roots=git_roots,
-        )
+        if database in COUNT_RULE_DATABASES:
+            ods_map = load_ods_table_by_dest(cur)
+            raw_result = build_count_rule_candidate(
+                database,
+                table,
+                rules,
+                ods_map,
+                git_roots=git_roots,
+            )
+        elif database in EXISTS_RULE_DATABASES:
+            raw_result = build_exists_rule_candidate(
+                database,
+                table,
+                rules,
+            )
+        else:
+            result = {
+                "country": QUALITY_RULE_FORM_CONFIG.get("country", "ph"),
+                "database": database,
+                "status": "blocked",
+                "rule_name": "",
+                "dest_tbl": table_name,
+                "dest_db": database,
+                "reason": f"不支持的数据库类型: {database}",
+                "ai_status": "not_applicable",
+                "validation_status": "not_validated",
+            }
+            emit(build_non_backlog_payload(database, table_name, result), {"batch": []})
+            return 0
     finally:
         conn.close()
 
