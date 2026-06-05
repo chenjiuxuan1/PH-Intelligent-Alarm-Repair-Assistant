@@ -131,7 +131,7 @@ class QualityRuleGapScannerTests(unittest.TestCase):
         self.assertEqual(result["candidate"]["src_check_field"], "created_at")
         self.assertIn("SELECT COUNT(*)", result["candidate"]["src_sql"])
 
-    def test_build_count_rule_candidate_allows_inconsistent_verified_fields(self):
+    def test_build_count_rule_candidate_blocks_when_check_fields_differ(self):
         module = load_module()
         table = {
             "id": 1,
@@ -150,23 +150,13 @@ class QualityRuleGapScannerTests(unittest.TestCase):
                 "src_tbl": "repay_cpop_income_item",
             }
         }
-        with mock.patch.object(module, "validate_candidate_sql", return_value={
-            "ok": True,
-            "reason": "SQL 可运行且两边结果一致",
-            "validation_status": "matched",
-            "validation_error": "",
-            "validation_window_begin": "2026-06-04 12:00:00",
-            "validation_window_end": "2026-06-05 12:00:00",
-            "src_value": 10,
-            "dest_value": 10,
-            "diff": 0,
-        }):
+        with mock.patch.object(module, "validate_candidate_sql") as mocked_validate:
             result = module.build_count_rule_candidate("dwd", table, {}, ods_table_by_dest)
 
-        self.assertEqual(result["status"], "candidate")
-        self.assertEqual(result["candidate"]["src_check_field"], "create_at")
-        self.assertEqual(result["candidate"]["dest_check_field"], "fee_finish_at")
-        self.assertEqual(result["validation_status"], "matched")
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["validation_status"], "not_validated")
+        self.assertIn("src_check_field 和 dest_check_field 必须一致", result["reason"])
+        mocked_validate.assert_not_called()
 
     def test_build_count_rule_candidate_escalates_fast_path_when_dest_falls_back_to_etl_time(self):
         module = load_module()
@@ -340,15 +330,15 @@ class QualityRuleGapScannerTests(unittest.TestCase):
             "dest_db": "dwd_sec",
             "dest_tbl": "dwd_cst_pay_cost_detail",
             "src_sql": "SELECT COUNT(DISTINCT order_no) AS cnt FROM ods.ods_repay_cpop_income_item WHERE create_at >= '{begin}' AND create_at < '{end}'",
-            "dest_sql": "SELECT COUNT(*) AS cnt FROM dwd_sec.dwd_cst_pay_cost_detail WHERE fee_finish_at >= '{begin}' AND fee_finish_at < '{end}'",
+            "dest_sql": "SELECT COUNT(*) AS cnt FROM dwd_sec.dwd_cst_pay_cost_detail WHERE create_at >= '{begin}' AND create_at < '{end}'",
             "src_check_field": "create_at",
-            "dest_check_field": "fee_finish_at",
+            "dest_check_field": "create_at",
             "ai_reason": "first",
             "git_matches": [],
         }
         retry_candidate = {
             **candidate,
-            "dest_sql": "SELECT COUNT(DISTINCT order_no) AS cnt FROM dwd_sec.dwd_cst_pay_cost_detail WHERE fee_finish_at >= '{begin}' AND fee_finish_at < '{end}'",
+            "dest_sql": "SELECT COUNT(DISTINCT order_no) AS cnt FROM dwd_sec.dwd_cst_pay_cost_detail WHERE create_at >= '{begin}' AND create_at < '{end}'",
             "ai_reason": "retry fixed it",
         }
 
@@ -368,6 +358,34 @@ class QualityRuleGapScannerTests(unittest.TestCase):
         self.assertEqual(result["ai_retry_count"], 1)
         self.assertEqual(result["validation_status"], "matched")
         self.assertIn("AI 二次修正后通过真实校验", result["reason"])
+
+    def test_finalize_candidate_with_validation_blocks_before_validation_when_fields_differ(self):
+        module = load_module()
+        candidate = {
+            "name": "cnt",
+            "src_db": "ods",
+            "src_tbl": "ods_repay_cpop_income_item",
+            "dest_db": "dwd_sec",
+            "dest_tbl": "dwd_cst_pay_cost_detail",
+            "src_sql": "SELECT COUNT(*) AS cnt FROM ods.ods_repay_cpop_income_item WHERE create_at >= '{begin}' AND create_at < '{end}'",
+            "dest_sql": "SELECT COUNT(*) AS cnt FROM dwd_sec.dwd_cst_pay_cost_detail WHERE fee_finish_at >= '{begin}' AND fee_finish_at < '{end}'",
+            "src_check_field": "create_at",
+            "dest_check_field": "fee_finish_at",
+        }
+
+        with mock.patch.object(module, "validate_candidate_sql") as mocked_validate:
+            result = module.finalize_candidate_with_validation(
+                "dwd_sec",
+                "dwd_cst_pay_cost_detail",
+                "dwd_sec",
+                candidate,
+                {},
+            )
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["validation_status"], "not_validated")
+        self.assertIn("src_check_field 和 dest_check_field 必须一致", result["reason"])
+        mocked_validate.assert_not_called()
 
     def test_build_count_rule_candidate_does_not_accept_cross_table_generic_source_etl_field(self):
         module = load_module()
@@ -633,7 +651,7 @@ class QualityRuleGapScannerTests(unittest.TestCase):
             "dest_sql": "select 2",
             "msg_template": "tpl",
             "src_check_field": "created_at",
-            "dest_check_field": "etl_create_time",
+            "dest_check_field": "created_at",
             "ai_reason": "ai guessed it",
         }
 

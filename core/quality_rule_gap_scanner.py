@@ -1073,6 +1073,20 @@ def blocked_result_with_candidate(database_name, target_table, target_db, candid
     return wrap_result_with_database(result, database_name, country=country)
 
 
+def make_validation_result(validation_status, reason, validation_error=""):
+    return {
+        "ok": False,
+        "reason": reason,
+        "validation_status": validation_status,
+        "validation_error": validation_error,
+        "validation_window_begin": "",
+        "validation_window_end": "",
+        "src_value": None,
+        "dest_value": None,
+        "diff": None,
+    }
+
+
 def maybe_retry_candidate_with_ai(database_name, working_table, candidate, validation_result, git_roots=None):
     if not should_retry_ai_on_mismatch():
         return None, {"status": "ai_retry_disabled", "reason": "未启用 AI 二次修正"}
@@ -1110,6 +1124,24 @@ def finalize_candidate_with_validation(database_name, target_table, target_db, c
         "ai_status": ai_status,
     }
     result = wrap_result_with_database(result, database_name, country=country)
+    if not count_rule_fields_are_consistent(
+        candidate.get("src_check_field"),
+        candidate.get("dest_check_field"),
+    ):
+        validation_result = make_validation_result(
+            "not_validated",
+            "基础要求不满足：两个校验语句的限制字段必须一致",
+        )
+        return blocked_result_with_candidate(
+            database_name,
+            target_table,
+            target_db,
+            candidate,
+            validation_result,
+            f"{base_reason}; 基础要求不满足：src_check_field 和 dest_check_field 必须一致，需人工确认",
+            country=country,
+            ai_status=ai_status,
+        )
     if not validation_enabled():
         result["validation_status"] = "skipped"
         result["validation_reason"] = "未启用真实校验"
