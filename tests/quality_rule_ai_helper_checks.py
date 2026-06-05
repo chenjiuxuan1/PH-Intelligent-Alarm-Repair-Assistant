@@ -428,8 +428,31 @@ class QualityRuleAiHelperTests(unittest.TestCase):
 
             self.assertEqual(len(snippets), 1)
             self.assertEqual(snippets[0]["path"], str(match_file))
-            self.assertLessEqual(len(snippets[0]["snippet"]), 1200)
             self.assertIn("create_at", snippets[0]["snippet"])
+
+    def test_collect_git_context_keeps_full_file_by_default(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            match_file = root / "dwd_cst_pay_cost_detail.sql"
+            full_text = (
+                "insert overwrite dwd_sec.dwd_cst_pay_cost_detail\n"
+                "select * from ods.ods_repay_cpop_income_item\n"
+                + ("x" * 3000)
+                + "\nwhere create_at >= '${begin}'"
+            )
+            match_file.write_text(full_text)
+
+            snippets = module.collect_git_context(
+                "dwd_cst_pay_cost_detail",
+                src_tbl="ods_repay_cpop_income_item",
+                git_roots=[str(root)],
+                preferred_paths=[str(match_file)],
+            )
+
+            self.assertEqual(snippets[0]["snippet"], full_text)
 
     def test_build_ai_messages_normalizes_datetime_values(self):
         messages = module.build_ai_messages(

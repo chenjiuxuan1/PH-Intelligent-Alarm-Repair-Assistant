@@ -52,6 +52,19 @@ def _optional_timeout_seconds(env_name):
     raw = os.environ.get(env_name, "")
     if raw in ("", None):
         return None
+
+
+def _optional_positive_int(env_name):
+    raw = os.environ.get(env_name, "")
+    if raw in ("", None):
+        return None
+    try:
+        value = int(raw)
+        if value <= 0:
+            return None
+        return value
+    except Exception:
+        return None
     try:
         value = float(raw)
         if value <= 0:
@@ -150,16 +163,13 @@ def iter_git_candidate_files(git_roots, table_names):
         yield from fallback_matches
 
 
-def extract_relevant_git_snippet(text, keywords, window=500, max_chars=1200):
-    lower_text = text.lower()
-    for keyword in keywords:
-        if not keyword:
-            continue
-        idx = lower_text.find(str(keyword).lower())
-        if idx >= 0:
-            start = max(0, idx - window)
-            end = min(len(text), idx + len(str(keyword)) + window)
-            return text[start:end][:max_chars]
+def extract_relevant_git_snippet(text, keywords=None):
+    max_chars = _optional_positive_int("QUALITY_RULE_AI_GIT_SNIPPET_MAX_CHARS")
+    if not max_chars:
+        return text
+    if len(text) <= max_chars:
+        return text
+    _ai_debug(f"git context truncated to {max_chars} chars by QUALITY_RULE_AI_GIT_SNIPPET_MAX_CHARS")
     return text[:max_chars]
 
 
@@ -210,7 +220,6 @@ def collect_git_context(dest_tbl, src_tbl=None, git_roots=None, limit=1, preferr
 
     preferred = choose_best_git_context_path(preferred, dest_tbl, src_tbl=src_tbl)
     candidate_iter = preferred if preferred else iter_git_candidate_files(git_roots, table_names)
-    snippet_keywords = [dest_tbl, src_tbl, ' where ', ' join ', ' from ', 'create_at', 'created_at', 'etl_create_time', 'etl_update_time']
     for path in candidate_iter:
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")
@@ -219,7 +228,7 @@ def collect_git_context(dest_tbl, src_tbl=None, git_roots=None, limit=1, preferr
         lower_text = text.lower()
         if dest_tbl.lower() not in lower_text and (not src_tbl or src_tbl.lower() not in lower_text):
             continue
-        snippet = extract_relevant_git_snippet(text, snippet_keywords)
+        snippet = extract_relevant_git_snippet(text)
         snippets.append({"path": str(path), "snippet": snippet})
         _ai_debug(f"selected git context file: {path}")
         if len(snippets) >= limit:
