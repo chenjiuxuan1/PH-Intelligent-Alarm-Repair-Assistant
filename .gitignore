@@ -27,6 +27,8 @@ Thumbs.db
 *.log
 *.tmp
 *.bak
+tmp/*
+!tmp/.gitkeep
 
 # 敏感信息
 *.key
@@ -61,6 +63,3 @@ schedule_check_report_*.md
 # 测试文件
 test_*.py
 *_test.py
-
-# 其他
-EOF

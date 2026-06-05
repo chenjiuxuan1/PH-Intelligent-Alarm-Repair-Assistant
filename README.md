@@ -107,8 +107,8 @@ export DB_PASSWORD='your_password'
 
 ```bash
 # 1. 克隆代码
-git clone https://github.com/jiangchuan788-debug/openclaw-dw-assistant.git
-cd openclaw-dw-assistant
+git clone git@github.com:chenjiuxuan1/PH-Intelligent-Alarm-Repair-Assistant.git
+cd PH-Intelligent-Alarm-Repair-Assistant
 
 # 2. 初始化配置（复制模板）
 cp templates/AGENTS.md.template AGENTS.md
@@ -116,6 +116,7 @@ cp templates/SOUL.md.template SOUL.md
 cp templates/USER.md.template USER.md
 cp templates/TOOLS.md.template TOOLS.md
 cp templates/IDENTITY.md.template IDENTITY.md
+mkdir -p tmp
 
 # 编辑这些文件，填写你的配置...
 
@@ -344,7 +345,7 @@ DB_NAME=wattrel       # 数据库名称
 
 ## 📞 联系信息
 
-- **GitHub**: https://github.com/jiangchuan788-debug/openclaw-dw-assistant
+- **GitHub**: https://github.com/chenjiuxuan1/PH-Intelligent-Alarm-Repair-Assistant
 - **用途**: 数据仓库监控和告警自动修复
 
 ---
