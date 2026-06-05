@@ -468,3 +468,36 @@ class QualityRuleAiHelperTests(unittest.TestCase):
 
         self.assertEqual(messages[0]["role"], "system")
         self.assertIn('"seen_at": "2026-06-04T18:31:00"', messages[1]["content"])
+
+    def test_build_langfuse_ingestion_batch_keeps_only_git_paths_in_messages(self):
+        messages = module.build_ai_messages(
+            "dwd_sec",
+            {
+                "db": "dwd_sec",
+                "tbl": "dwd_cst_pay_cost_detail",
+                "src_db": "ods",
+                "src_tbl": "ods_repay_cpop_income_item",
+                "columns": ["create_at"],
+            },
+            [
+                {
+                    "path": "/tmp/example.sql",
+                    "snippet": "select * from ods.ods_repay_cpop_income_item where create_at >= '{begin}'",
+                }
+            ],
+            "src_check_field/dest_check_field 不一致",
+        )
+
+        batch = module.build_langfuse_ingestion_batch(
+            messages,
+            '{"src_sql":"select 1","dest_sql":"select 1"}',
+            {"src_sql": "select 1", "dest_sql": "select 1"},
+        )
+
+        trace_input = batch["batch"][0]["body"]["input"]
+        generation_input = batch["batch"][1]["body"]["input"]
+        trace_payload = json.loads(trace_input[1]["content"])
+        generation_payload = json.loads(generation_input[1]["content"])
+
+        self.assertEqual(trace_payload["git_context"], [{"path": "/tmp/example.sql"}])
+        self.assertEqual(generation_payload["git_context"], [{"path": "/tmp/example.sql"}])

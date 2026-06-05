@@ -389,10 +389,36 @@ def maybe_trace_langfuse(messages, response_text, parsed_output):
     return trace_langfuse_via_http(messages, response_text, parsed_output)
 
 
+def sanitize_messages_for_langfuse(messages):
+    sanitized = []
+    for message in messages or []:
+        item = dict(message or {})
+        content = item.get("content")
+        if not isinstance(content, str):
+            sanitized.append(item)
+            continue
+        try:
+            payload = json.loads(content)
+        except Exception:
+            sanitized.append(item)
+            continue
+        git_context = payload.get("git_context")
+        if isinstance(git_context, list):
+            payload["git_context"] = [
+                {"path": entry.get("path", "")}
+                for entry in git_context
+                if isinstance(entry, dict) and entry.get("path")
+            ]
+        item["content"] = json.dumps(payload, ensure_ascii=True, indent=2)
+        sanitized.append(item)
+    return sanitized
+
+
 def build_langfuse_ingestion_batch(messages, response_text, parsed_output):
     trace_id = uuid.uuid4().hex
     generation_id = uuid.uuid4().hex
     now = datetime.now(timezone.utc).isoformat()
+    observation_messages = sanitize_messages_for_langfuse(messages)
     return {
         "batch": [
             {
@@ -402,7 +428,7 @@ def build_langfuse_ingestion_batch(messages, response_text, parsed_output):
                 "body": {
                     "id": trace_id,
                     "name": "quality_rule_ai_fallback",
-                    "input": messages,
+                    "input": observation_messages,
                     "output": parsed_output,
                 },
             },
@@ -415,7 +441,7 @@ def build_langfuse_ingestion_batch(messages, response_text, parsed_output):
                     "traceId": trace_id,
                     "name": "generate_quality_rule_candidate",
                     "model": QUALITY_RULE_AI_CONFIG.get("model"),
-                    "input": messages,
+                    "input": observation_messages,
                     "output": response_text,
                     "metadata": {"parsed_output": parsed_output},
                 },
