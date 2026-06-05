@@ -333,9 +333,9 @@ def build_ai_messages(database_name, table, git_context, failure_reason):
                     "src_tbl": "ods_paysvr_fee",
                     "src_check_field": "fee_finish_at",
                     "dest_check_field": "fee_finish_at",
-                    "src_sql": "SELECT COALESCE(SUM(fee_amount), 0) AS cnt FROM ods.ods_paysvr_fee WHERE fee_finish_at >= '{begin}' AND fee_finish_at < '{end}'",
-                    "dest_sql": "SELECT COALESCE(SUM(total_cost), 0) AS cnt FROM dwd_sec.dwd_cst_pay_cost_detail WHERE fee_finish_at >= '{begin}' AND fee_finish_at < '{end}'",
-                    "reason": "Git SQL 显示目标表主驱动明细来自 ods_paysvr_fee，fee_finish_at 是共同业务时间，total_cost 来源于 fee_amount。由于 ETL 存在拆分和 union all，优先用金额汇总而不是 count(*)。"
+                    "src_sql": "SELECT COALESCE(ROUND(SUM(fee_amount), 6), 0) AS cnt FROM ods.ods_paysvr_fee WHERE fee_finish_at >= '{begin}' AND fee_finish_at < '{end}'",
+                    "dest_sql": "SELECT COALESCE(ROUND(SUM(total_cost), 6), 0) AS cnt FROM dwd_sec.dwd_cst_pay_cost_detail WHERE fee_finish_at >= '{begin}' AND fee_finish_at < '{end}'",
+                    "reason": "Git SQL 显示目标表主驱动明细来自 ods_paysvr_fee，fee_finish_at 是共同业务时间，total_cost 来源于 fee_amount。由于 ETL 存在拆分和 union all，优先用金额汇总而不是 count(*)，并统一 ROUND 精度避免小数尾差。"
                 }
             }
         ],
@@ -361,6 +361,7 @@ def build_ai_messages(database_name, table, git_context, failure_reason):
             "如果简单 count(*) 不能合理校验两边数据，可以改用 count(distinct 业务键)、sum(金额)、或带业务过滤条件的单值聚合，但不要输出多列或明细结果。",
             "如果目标表某个金额列、成本列、数量列是由源表某个字段直接映射或拆分汇总而来，优先校验这类同语义聚合，例如 sum(source_amount) 对 sum(target_amount)。",
             "如果 ETL 包含 split、rate、比例分摊、union all、多笔拆分等迹象，默认 count(*) 不可靠，应优先考虑 sum(金额) 或 count(distinct 业务键)。",
+            "如果选择金额、成本、汇率换算后的数值聚合，必须统一两边精度，例如 ROUND(SUM(...), 6) 或 CAST 为相同 DECIMAL 精度，避免 0.000001 级别尾差导致误判。",
             "如果源表和目标表字段同语义，应优先给出相同字段名。",
             "如果 Git 片段或元数据表明源表和目标表都存在同一业务事件字段，必须优先使用同一个字段名，不要退回到目标表的 etl_create_time。",
             "如果目标表不存在同名业务时间字段，应优先选择 dest_columns 中真实存在且语义最接近的业务时间字段，例如 finish_at、paid_at、success_at、completed_at。",
@@ -423,14 +424,25 @@ def sanitize_messages_for_langfuse(messages):
         except Exception:
             sanitized.append(item)
             continue
+        minimal_payload = {
+            "task": payload.get("task", ""),
+            "database": payload.get("database", ""),
+            "dest_db": payload.get("dest_db", ""),
+            "dest_tbl": payload.get("dest_tbl", ""),
+            "src_db": payload.get("src_db", ""),
+            "src_tbl": payload.get("src_tbl", ""),
+            "failure_reason": payload.get("failure_reason", ""),
+            "validation_feedback": payload.get("validation_feedback", {}),
+            "git_context": [],
+        }
         git_context = payload.get("git_context")
         if isinstance(git_context, list):
-            payload["git_context"] = [
+            minimal_payload["git_context"] = [
                 {"path": entry.get("path", "")}
                 for entry in git_context
                 if isinstance(entry, dict) and entry.get("path")
             ]
-        item["content"] = json.dumps(payload, ensure_ascii=True, indent=2)
+        item["content"] = json.dumps(minimal_payload, ensure_ascii=True, indent=2)
         sanitized.append(item)
     return sanitized
 

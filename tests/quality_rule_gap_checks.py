@@ -272,6 +272,36 @@ class QualityRuleGapScannerTests(unittest.TestCase):
         self.assertEqual(result["src_value"], 3)
         self.assertEqual(result["dest_value"], 5)
 
+    def test_enrich_ai_schema_context_fetches_dest_columns_when_raw_value_is_stringified_empty_list(self):
+        fake_cursor = FakeCursor([
+            [("fee_finish_at", "datetime"), ("etl_create_time", "datetime")],
+            [("dwd_cst_pay_cost_detail", "CREATE TABLE `dwd_cst_pay_cost_detail` (\n  `fee_finish_at` datetime,\n  `etl_create_time` datetime\n)")],
+        ])
+        module = load_module()
+
+        enriched = module.enrich_ai_schema_context(
+            {
+                "db": "dwd_sec",
+                "tbl": "dwd_cst_pay_cost_detail",
+                "dest_db": "dwd_sec",
+                "dest_tbl": "dwd_cst_pay_cost_detail",
+                "dest_columns": "[]",
+                "dest_ddl_summary": "",
+            },
+            cursor=fake_cursor,
+        )
+
+        self.assertEqual(enriched["dest_columns"], ["fee_finish_at", "etl_create_time"])
+        self.assertEqual(enriched["dest_schema_status"], "ok")
+
+    def test_extract_columns_from_ddl_summary_parses_backtick_columns(self):
+        module = load_module()
+        ddl = "CREATE TABLE `x` (\n  `fee_finish_at` datetime,\n  `etl_create_time` datetime,\n  `total_cost` decimal(38,8)\n)"
+        self.assertEqual(
+            module.extract_columns_from_ddl_summary(ddl),
+            ["fee_finish_at", "etl_create_time", "total_cost"],
+        )
+
     def test_validate_candidate_sql_uses_sr_gateway_backend_when_configured(self):
         module = load_module()
         module.QUALITY_RULE_VALIDATION_CONFIG["backend"] = "sr_gateway"

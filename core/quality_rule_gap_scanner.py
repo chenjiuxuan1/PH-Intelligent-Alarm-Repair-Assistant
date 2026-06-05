@@ -465,6 +465,21 @@ def fetch_table_columns(cursor, database_name, table_name):
     return columns
 
 
+def extract_columns_from_ddl_summary(ddl_summary):
+    text = str(ddl_summary or "")
+    if not text:
+        return []
+    columns = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("`"):
+            continue
+        parts = stripped.split("`", 2)
+        if len(parts) >= 3 and parts[1]:
+            columns.append(parts[1])
+    return columns
+
+
 def fetch_table_ddl_summary(cursor, database_name, table_name):
     if not database_name or not table_name:
         return ""
@@ -701,10 +716,17 @@ def enrich_ai_schema_context(table, cursor=None):
 
     try:
         raw_source_columns = parse_json_list(table.get("source_columns") or table.get("columns"))
+        raw_dest_columns = parse_json_list(table.get("dest_columns"))
         source_schema_error = ""
         dest_schema_error = ""
         if raw_source_columns:
             table["source_columns"] = raw_source_columns
+        else:
+            table["source_columns"] = []
+        if raw_dest_columns:
+            table["dest_columns"] = raw_dest_columns
+        else:
+            table["dest_columns"] = []
         src_db = table.get("src_db")
         src_tbl = table.get("src_tbl")
         dest_db = table.get("dest_db") or table.get("db")
@@ -716,6 +738,8 @@ def enrich_ai_schema_context(table, cursor=None):
                     table["source_columns"] = fetch_table_columns(own_cursor, src_db, src_tbl)
                 if src_db and src_tbl and not table.get("source_ddl_summary"):
                     table["source_ddl_summary"] = fetch_table_ddl_summary(own_cursor, src_db, src_tbl)
+                if not table.get("source_columns") and table.get("source_ddl_summary"):
+                    table["source_columns"] = extract_columns_from_ddl_summary(table.get("source_ddl_summary"))
             except Exception as exc:
                 source_schema_error = str(exc)
             try:
@@ -723,6 +747,8 @@ def enrich_ai_schema_context(table, cursor=None):
                     table["dest_columns"] = fetch_table_columns(own_cursor, dest_db, dest_tbl)
                 if dest_db and dest_tbl and not table.get("dest_ddl_summary"):
                     table["dest_ddl_summary"] = fetch_table_ddl_summary(own_cursor, dest_db, dest_tbl)
+                if not table.get("dest_columns") and table.get("dest_ddl_summary"):
+                    table["dest_columns"] = extract_columns_from_ddl_summary(table.get("dest_ddl_summary"))
             except Exception as exc:
                 dest_schema_error = str(exc)
         table["source_schema_status"] = "ok" if table.get("source_columns") or table.get("source_ddl_summary") else ("error" if source_schema_error else "missing")

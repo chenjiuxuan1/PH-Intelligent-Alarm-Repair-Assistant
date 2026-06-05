@@ -34,6 +34,7 @@ class QualityRuleAiHelperTests(unittest.TestCase):
         self.assertIn("主驱动源表", messages[0]["content"])
         self.assertIn("ods_paysvr_fee", messages[1]["content"])
         self.assertIn("SUM(total_cost)", messages[1]["content"])
+        self.assertIn("ROUND(SUM(total_cost), 6)", messages[1]["content"])
 
     def test_deadline_and_timeouts_default_to_disabled(self):
         with mock.patch.dict(module.os.environ, {}, clear=False):
@@ -504,3 +505,7 @@ class QualityRuleAiHelperTests(unittest.TestCase):
 
         self.assertEqual(trace_payload["git_context"], [{"path": "/tmp/example.sql"}])
         self.assertEqual(generation_payload["git_context"], [{"path": "/tmp/example.sql"}])
+        self.assertEqual(
+            sorted(trace_payload.keys()),
+            sorted(["task", "database", "dest_db", "dest_tbl", "src_db", "src_tbl", "failure_reason", "validation_feedback", "git_context"]),
+        )
