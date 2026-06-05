@@ -243,8 +243,11 @@ def build_ai_messages(database_name, table, git_context, failure_reason):
         "请根据给定的源表、目标表、失败原因和一段 Git SQL 片段，生成一组可执行的 cnt 质量校验草稿。"
         "输出必须是严格 JSON，不要输出 Markdown，不要输出额外解释。"
     )
-    raw_columns = table.get("columns")
+    raw_columns = table.get("source_columns")
+    if raw_columns is None:
+        raw_columns = table.get("columns")
     source_columns = normalize_for_json(raw_columns if raw_columns is not None else [])
+    dest_columns = normalize_for_json(table.get("dest_columns") or [])
     payload = {
         "task": "generate_count_rule_candidate",
         "database": database_name,
@@ -253,6 +256,9 @@ def build_ai_messages(database_name, table, git_context, failure_reason):
         "src_db": table.get("src_db") or "",
         "src_tbl": table.get("src_tbl") or "",
         "source_columns": source_columns,
+        "dest_columns": dest_columns,
+        "source_ddl_summary": normalize_for_json(table.get("source_ddl_summary") or ""),
+        "dest_ddl_summary": normalize_for_json(table.get("dest_ddl_summary") or ""),
         "failure_reason": failure_reason,
         "git_context": normalize_for_json(git_context),
         "good_examples": [
@@ -279,6 +285,18 @@ def build_ai_messages(database_name, table, git_context, failure_reason):
                     "dest_sql": "SELECT COUNT(*) as cnt FROM ods.ods_repay_asset WHERE asset_create_at >= '{begin}' AND asset_create_at < '{end}'",
                     "reason": "源表和目标表都存在同一业务事件时间字段 asset_create_at，应优先按相同字段做同窗口数量校验，而不是退回到 ETL 入仓时间。"
                 }
+            },
+            {
+                "scenario": "源表存在 create_at，但目标表不存在 create_at；目标表存在业务完成时间 fee_finish_at",
+                "expected_output": {
+                    "src_db": "ods",
+                    "src_tbl": "ods_repay_cpop_income_item",
+                    "src_check_field": "create_at",
+                    "dest_check_field": "fee_finish_at",
+                    "src_sql": "SELECT count(1) AS cnt FROM ods.ods_repay_cpop_income_item WHERE create_at >= '{begin}' AND create_at < '{end}'",
+                    "dest_sql": "SELECT count(1) AS cnt FROM dwd_sec.dwd_cst_pay_cost_detail WHERE fee_finish_at >= '{begin}' AND fee_finish_at < '{end}'",
+                    "reason": "目标表不存在 create_at，但存在业务完成时间 fee_finish_at，应优先使用真实存在且语义最接近的业务时间字段，而不是臆测 create_at。"
+                }
             }
         ],
         "output_schema": {
@@ -295,10 +313,14 @@ def build_ai_messages(database_name, table, git_context, failure_reason):
             "优先从 git SQL 片段中识别源表、目标表和事件限制字段。",
             "优先选择业务事件时间字段，例如 create_at、created_at、create_time、order_time 等。",
             "SQL 中如果使用时间窗口，必须保留 {begin} 和 {end} 占位符。",
+            "src_check_field 必须真实存在于 source_columns 或 source_ddl_summary 或 Git 片段明确提到的源表字段中，否则禁止输出。",
+            "dest_check_field 必须真实存在于 dest_columns 或 dest_ddl_summary 中，否则禁止输出。",
             "不要臆测源表存在 etl_create_time/etl_update_time，除非 Git 片段或 source_columns 明确出现。",
             "如果源表和目标表字段同语义，应优先给出相同字段名。",
             "如果 Git 片段或元数据表明源表和目标表都存在同一业务事件字段，必须优先使用同一个字段名，不要退回到目标表的 etl_create_time。",
-            "只有在确实找不到同名业务事件字段时，才允许源表和目标表使用不同字段；此时也必须返回 src_check_field、dest_check_field、src_sql 和 dest_sql 草稿，并在 reason 中解释差异原因。",
+            "如果目标表不存在同名业务时间字段，应优先选择 dest_columns 中真实存在且语义最接近的业务时间字段，例如 finish_at、paid_at、success_at、completed_at。",
+            "只有在目标表不存在可确认的业务事件时间字段时，才允许退回 etl_create_time 或 etl_update_time，并在 reason 中说明原因。",
+            "如果源表和目标表最终使用不同字段，也必须返回 src_check_field、dest_check_field、src_sql 和 dest_sql 草稿，并在 reason 中解释差异原因。",
             "如果无法完全确定，也返回最合理草稿，并在 reason 中简要说明依据。",
         ],
     }
@@ -531,10 +553,9 @@ def source_field_is_verified(field_name, table, git_context):
     if not field_name:
         return False
     normalized = str(field_name).lower()
-    if not normalized.startswith("etl_"):
-        return True
-
-    raw_columns = table.get("columns")
+    raw_columns = table.get("source_columns")
+    if raw_columns is None:
+        raw_columns = table.get("columns")
     columns = []
     if isinstance(raw_columns, list):
         columns = [str(item).lower() for item in raw_columns]
@@ -548,10 +569,38 @@ def source_field_is_verified(field_name, table, git_context):
     if normalized in columns:
         return True
 
+    ddl_summary = str(table.get("source_ddl_summary") or "")
+    if ddl_summary and re.search(rf"`?{re.escape(normalized)}`?\b", ddl_summary, re.IGNORECASE):
+        return True
+
     for item in git_context or []:
         snippet = (item or {}).get("snippet", "")
         if re.search(rf"\b{re.escape(normalized)}\b", snippet, re.IGNORECASE):
             return True
+    return False
+
+
+def dest_field_is_verified(field_name, table):
+    if not field_name:
+        return False
+    normalized = str(field_name).lower()
+    raw_columns = table.get("dest_columns")
+    columns = []
+    if isinstance(raw_columns, list):
+        columns = [str(item).lower() for item in raw_columns]
+    elif isinstance(raw_columns, str) and raw_columns:
+        try:
+            parsed_columns = json.loads(raw_columns)
+            if isinstance(parsed_columns, list):
+                columns = [str(item).lower() for item in parsed_columns]
+        except Exception:
+            columns = []
+    if normalized in columns:
+        return True
+
+    ddl_summary = str(table.get("dest_ddl_summary") or "")
+    if ddl_summary and re.search(rf"`?{re.escape(normalized)}`?\b", ddl_summary, re.IGNORECASE):
+        return True
     return False
 
 
@@ -660,11 +709,9 @@ def generate_rule_candidate_with_ai(database_name, table, failure_reason, git_ro
         _ai_debug(meta["reason"])
         return (None, meta) if return_meta else None
 
-    if not count_rule_fields_are_consistent(parsed):
-        meta["status"] = "ai_output_inconsistent_fields"
-        meta["reason"] = (
-            f"AI 生成的字段不一致: {parsed.get('src_check_field', '')} != {parsed.get('dest_check_field', '')}"
-        )
+    if not dest_field_is_verified(parsed.get("dest_check_field"), table):
+        meta["status"] = "ai_output_unverified_dest_field"
+        meta["reason"] = f"AI 生成的目标字段未验证: {parsed.get('dest_check_field', '')}"
         _ai_debug(meta["reason"])
         return (None, meta) if return_meta else None
 

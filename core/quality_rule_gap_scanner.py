@@ -412,6 +412,90 @@ def fetch_rows(cursor, sql, params=None):
     return cursor.fetchall()
 
 
+def _escape_identifier(value):
+    return str(value or "").replace("`", "``")
+
+
+def fetch_table_columns(cursor, database_name, table_name):
+    if not database_name or not table_name:
+        return []
+    sql = f"DESCRIBE `{_escape_identifier(database_name)}`.`{_escape_identifier(table_name)}`"
+    try:
+        rows = fetch_rows(cursor, sql)
+    except Exception:
+        return []
+
+    columns = []
+    for row in rows or []:
+        if isinstance(row, dict):
+            field_name = (
+                row.get("Field")
+                or row.get("field")
+                or row.get("COLUMN_NAME")
+                or row.get("column_name")
+                or row.get("col_name")
+            )
+        else:
+            field_name = row[0] if row else None
+        if field_name:
+            columns.append(str(field_name))
+    return columns
+
+
+def fetch_table_ddl_summary(cursor, database_name, table_name):
+    if not database_name or not table_name:
+        return ""
+    sql = f"SHOW CREATE TABLE `{_escape_identifier(database_name)}`.`{_escape_identifier(table_name)}`"
+    try:
+        rows = fetch_rows(cursor, sql)
+    except Exception:
+        return ""
+    if not rows:
+        return ""
+    row = rows[0]
+    if isinstance(row, dict):
+        ddl = row.get("Create Table") or row.get("create_table") or row.get("Create View") or ""
+    else:
+        ddl = row[1] if len(row) > 1 else ""
+    return str(ddl or "")
+
+
+def enrich_ai_schema_context(table, cursor=None):
+    table = deepcopy(table)
+    own_conn = None
+    own_cursor = cursor
+    if own_cursor is None:
+        try:
+            own_conn = get_db_connection()
+            own_cursor = own_conn.cursor()
+        except Exception:
+            own_conn = None
+            own_cursor = None
+
+    try:
+        raw_source_columns = parse_json_list(table.get("source_columns") or table.get("columns"))
+        if raw_source_columns:
+            table["source_columns"] = raw_source_columns
+        src_db = table.get("src_db")
+        src_tbl = table.get("src_tbl")
+        dest_db = table.get("dest_db") or table.get("db")
+        dest_tbl = table.get("dest_tbl") or table.get("tbl")
+
+        if own_cursor is not None:
+            if not table.get("source_columns") and src_db and src_tbl:
+                table["source_columns"] = fetch_table_columns(own_cursor, src_db, src_tbl)
+            if src_db and src_tbl and not table.get("source_ddl_summary"):
+                table["source_ddl_summary"] = fetch_table_ddl_summary(own_cursor, src_db, src_tbl)
+            if dest_db and dest_tbl and not table.get("dest_columns"):
+                table["dest_columns"] = fetch_table_columns(own_cursor, dest_db, dest_tbl)
+            if dest_db and dest_tbl and not table.get("dest_ddl_summary"):
+                table["dest_ddl_summary"] = fetch_table_ddl_summary(own_cursor, dest_db, dest_tbl)
+        return table
+    finally:
+        if own_conn is not None:
+            own_conn.close()
+
+
 def load_ods_table_by_dest(cursor):
     rows = fetch_rows(cursor, "SELECT * FROM wattrel_ods_table_settings")
     return {row["dest_tbl"]: row for row in rows if row.get("dest_tbl")}
@@ -441,7 +525,7 @@ def load_tables(cursor, database_name, monitor_level=None):
     return fetch_rows(cursor, sql, tuple(params))
 
 
-def build_count_rule_candidate(database_name, table, rule_map, ods_table_by_dest, git_roots=None):
+def build_count_rule_candidate(database_name, table, rule_map, ods_table_by_dest, git_roots=None, cursor=None):
     target_table = table["dest_tbl"] if database_name in ("ods", "ods_security") else table["tbl"]
     existing_rule = rule_map.get(target_table, {}).get(COUNT_RULE_NAME)
     if existing_rule:
@@ -475,12 +559,17 @@ def build_count_rule_candidate(database_name, table, rule_map, ods_table_by_dest
     else:
         working_table, enrich_error = enrich_etl_table_info(table, ods_table_by_dest, git_roots=git_roots)
         if working_table is None:
-            ai_candidate, ai_meta = call_ai_candidate(
-                database_name,
+            ai_table = enrich_ai_schema_context(
                 {
                     **table,
                     "dest_tbl": target_table,
+                    "dest_db": table.get("dest_db") or table.get("db"),
                 },
+                cursor=cursor,
+            )
+            ai_candidate, ai_meta = call_ai_candidate(
+                database_name,
+                ai_table,
                 enrich_error,
                 git_roots=git_roots,
             )
@@ -495,12 +584,14 @@ def build_count_rule_candidate(database_name, table, rule_map, ods_table_by_dest
                     "ai_status": ai_meta.get("status", ""),
                 }
             return blocked_result_with_ai_draft(
-                table,
+                ai_table,
                 target_table,
                 table.get("db"),
                 ai_meta,
                 enrich_error,
             )
+
+    working_table = enrich_ai_schema_context(working_table, cursor=cursor)
 
     if database_name != "dim":
         src_check_field = infer_source_check_field(working_table, git_roots=git_roots)
@@ -736,6 +827,7 @@ def scan_database_rules(cursor, database_name, monitor_level=None, git_roots=Non
                 rule_map,
                 ods_table_by_dest,
                 git_roots=git_roots,
+                cursor=cursor,
             )
         else:
             result = build_exists_rule_candidate(database_name, table, rule_map)
