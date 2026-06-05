@@ -1,4 +1,6 @@
 import importlib.util
+import io
+import json
 import sys
 import types
 import unittest
@@ -68,6 +70,75 @@ class RunSingleQualityRuleFlowTests(unittest.TestCase):
         self.assertEqual(config_table_name, "wattrel_etl_table_settings")
         self.assertIn("wattrel_etl_table_settings", cursor.executed[0][0])
         self.assertEqual(cursor.executed[0][1], ("dwd", "dwd_demo"))
+
+    def test_main_does_not_send_tv_for_single_table_run(self):
+        module = load_module()
+
+        fake_conn = mock.MagicMock()
+        fake_cursor = mock.MagicMock()
+        fake_conn.cursor.return_value = fake_cursor
+        fake_cursor.fetchone.return_value = {"tbl": "dwd_demo"}
+
+        module.get_db_connection = mock.MagicMock(return_value=fake_conn)
+        module.load_single_table = mock.MagicMock(return_value=({"tbl": "dwd_demo"}, "wattrel_etl_table_settings"))
+        module.load_quality_rules = mock.MagicMock(return_value=[])
+        module.load_ods_table_by_dest = mock.MagicMock(return_value={})
+        module.build_count_rule_candidate = mock.MagicMock(
+            return_value={
+                "status": "blocked",
+                "rule_name": "cnt",
+                "dest_tbl": "dwd_demo",
+                "dest_db": "dwd",
+                "src_db": "ods",
+                "src_tbl": "ods_demo",
+                "src_sql": "select 1",
+                "dest_sql": "select 2",
+                "check_field": "input_date",
+                "reason": "需要人工确认",
+            }
+        )
+        module.load_backlog = mock.MagicMock(return_value={"items": {}})
+        module.merge_candidates_into_backlog = mock.MagicMock(
+            return_value=(
+                {
+                    "items": {
+                        "dwd::dwd.dwd_demo::cnt": {
+                            "candidate_key": "dwd::dwd.dwd_demo::cnt",
+                            "status": "pending_confirmation",
+                            "dest_tbl": "dwd_demo",
+                            "src_sql": "select 1",
+                            "dest_sql": "select 2",
+                        }
+                    }
+                },
+                [{"candidate_key": "dwd::dwd.dwd_demo::cnt"}],
+            )
+        )
+        module.build_candidate_key = mock.MagicMock(return_value="dwd::dwd.dwd_demo::cnt")
+        module.submit_backlog_items_to_form = mock.MagicMock(
+            return_value={"submitted": 1, "results": [{"candidate_key": "dwd::dwd.dwd_demo::cnt", "ok": True}]}
+        )
+        module.compute_form_payload_signature = mock.MagicMock(return_value="sig")
+        module.save_backlog = mock.MagicMock()
+        module.load_langfuse_batch = mock.MagicMock(return_value={"batch": []})
+
+        argv_backup = sys.argv
+        stdout_backup = sys.stdout
+        sys.argv = ["run_single_quality_rule_flow.py", "--database", "dwd", "--tbl", "dwd_demo"]
+        buffer = io.StringIO()
+        sys.stdout = buffer
+        try:
+            exit_code = module.main()
+        finally:
+            sys.argv = argv_backup
+            sys.stdout = stdout_backup
+
+        self.assertEqual(exit_code, 0)
+        output = buffer.getvalue()
+        payload_text = output.split("===FULL_CHAIN_RESULT===")[1].split("===LANGFUSE_BATCH===")[0].strip()
+        payload = json.loads(payload_text)
+        self.assertEqual(payload["tv_result"]["reason"], "deferred_batch_notification")
+        self.assertEqual(payload["new_candidate_keys"], ["dwd::dwd.dwd_demo::cnt"])
 
 
 if __name__ == "__main__":

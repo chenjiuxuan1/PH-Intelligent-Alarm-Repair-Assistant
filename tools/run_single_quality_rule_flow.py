@@ -17,7 +17,6 @@ from core.quality_rule_confirmation import (
     compute_form_payload_signature,
     load_backlog,
     merge_candidates_into_backlog,
-    notify_new_candidates_via_tv,
     save_backlog,
     submit_backlog_items_to_form,
 )
@@ -43,8 +42,8 @@ def empty_form_result():
     return {"submitted": 0, "results": [], "skipped": True}
 
 
-def empty_tv_result():
-    return {"success": True, "skipped": True, "reason": "no_new_candidates"}
+def empty_tv_result(reason="deferred_batch_notification"):
+    return {"success": True, "skipped": True, "reason": reason}
 
 
 def emit(full_chain_result, batch_payload):
@@ -78,6 +77,7 @@ def build_non_backlog_payload(database, table, result):
         "candidate_key": candidate_key,
         "scan_result": result,
         "new_candidates": 0,
+        "new_candidate_keys": [],
         "form_submission_items": 0,
         "form_result": empty_form_result(),
         "tv_result": empty_tv_result(),
@@ -190,23 +190,16 @@ def main():
             item["form_submitted_at"] = detected_at
             item["last_form_payload_signature"] = compute_form_payload_signature(item)
 
-    tv_result = notify_new_candidates_via_tv(
-        new_items,
-        confirmation_sheet_url=QUALITY_RULE_FORM_CONFIG.get("confirmation_sheet_url", ""),
-    )
-    if tv_result.get("success"):
-        for item in new_items:
-            item["notified_at"] = detected_at
-
     save_backlog(backlog)
     payload = {
         "single_table": f"{database}.{table_name}",
         "candidate_key": candidate_key,
         "scan_result": result,
         "new_candidates": len(new_items),
+        "new_candidate_keys": [item["candidate_key"] for item in new_items],
         "form_submission_items": len(form_items),
         "form_result": form_result,
-        "tv_result": tv_result,
+        "tv_result": empty_tv_result(),
         "backlog_item": target_item,
     }
     emit(payload, load_langfuse_batch())
