@@ -250,7 +250,11 @@ def build_ai_messages(database_name, table, git_context, failure_reason):
     system_prompt = (
         "你是一个资深数仓数据质量规则生成助手。"
         "请根据给定的源表、目标表、失败原因和一段 Git SQL 片段，生成一组可执行的单指标质量校验草稿。"
+        "在生成 SQL 之前，你必须先从 ETL SQL 中识别主驱动源表、目标表最终落入的指标来源列、以及真正用于业务切分的事件时间字段。"
+        "不要把仅用于维表映射、账号映射、拉链关联、补充属性的辅助表误判为主校验源表。"
         "你不局限于 count(*)，也可以使用 count(distinct ...)、sum(...)、按业务键过滤后的聚合等方式，"
+        "如果 ETL 存在拆分、union all、多对一或一对多展开，优先生成金额/成本类 sum 聚合，而不是草率使用 count(*)。"
+        "只有当 ETL 证据表明两边天然是一对一明细口径时，count(*) 才是优先选项。"
         "只要源表 SQL 与目标表 SQL 最终都输出一个可比较的数值结果即可。"
         "输出必须是严格 JSON，不要输出 Markdown，不要输出额外解释。"
     )
@@ -321,6 +325,18 @@ def build_ai_messages(database_name, table, git_context, failure_reason):
                     "dest_sql": "SELECT COUNT(DISTINCT order_no) AS cnt FROM dwd.dwd_payment_detail WHERE fee_finish_at >= '{begin}' AND fee_finish_at < '{end}'",
                     "reason": "两边都可以按业务单号去重后做单指标校验；虽然事件字段名称不同，但都是真实存在且语义相近的业务完成时间。"
                 }
+            },
+            {
+                "scenario": "ETL 主驱动源表是费用明细表，目标表金额列直接来自源表金额列；映射表只用于补充 account_key 等属性，不应被当成主校验源表",
+                "expected_output": {
+                    "src_db": "ods",
+                    "src_tbl": "ods_paysvr_fee",
+                    "src_check_field": "fee_finish_at",
+                    "dest_check_field": "fee_finish_at",
+                    "src_sql": "SELECT COALESCE(SUM(fee_amount), 0) AS cnt FROM ods.ods_paysvr_fee WHERE fee_finish_at >= '{begin}' AND fee_finish_at < '{end}'",
+                    "dest_sql": "SELECT COALESCE(SUM(total_cost), 0) AS cnt FROM dwd_sec.dwd_cst_pay_cost_detail WHERE fee_finish_at >= '{begin}' AND fee_finish_at < '{end}'",
+                    "reason": "Git SQL 显示目标表主驱动明细来自 ods_paysvr_fee，fee_finish_at 是共同业务时间，total_cost 来源于 fee_amount。由于 ETL 存在拆分和 union all，优先用金额汇总而不是 count(*)。"
+                }
             }
         ],
         "output_schema": {
@@ -335,16 +351,21 @@ def build_ai_messages(database_name, table, git_context, failure_reason):
         "constraints": [
             "生成的是单指标校验规则草稿，必须返回 src_sql 和 dest_sql，并且两边 SQL 都必须输出一个可比较的数值列，列别名统一为 cnt。",
             "优先从 git SQL 片段中识别源表、目标表、业务键和事件限制字段。",
+            "如果 Git SQL 显示某个表只用于映射、补充属性、拉链关联、account_key 关联、维表 enrichment，不要把它当成主驱动源表。",
+            "优先从最终 insert into 目标表之前的主明细来源，倒推出真正的源表和指标来源列。",
             "优先选择业务事件时间字段，例如 create_at、created_at、create_time、order_time、finish_at、success_at 等。",
             "SQL 中如果使用时间窗口，必须保留 {begin} 和 {end} 占位符。",
             "src_check_field 必须真实存在于 source_columns 或 source_ddl_summary 或 Git 片段明确提到的源表字段中，否则禁止输出。",
             "dest_check_field 必须真实存在于 dest_columns 或 dest_ddl_summary 中，否则禁止输出。",
             "不要臆测源表存在 etl_create_time/etl_update_time，除非 Git 片段或 source_columns 明确出现。",
             "如果简单 count(*) 不能合理校验两边数据，可以改用 count(distinct 业务键)、sum(金额)、或带业务过滤条件的单值聚合，但不要输出多列或明细结果。",
+            "如果目标表某个金额列、成本列、数量列是由源表某个字段直接映射或拆分汇总而来，优先校验这类同语义聚合，例如 sum(source_amount) 对 sum(target_amount)。",
+            "如果 ETL 包含 split、rate、比例分摊、union all、多笔拆分等迹象，默认 count(*) 不可靠，应优先考虑 sum(金额) 或 count(distinct 业务键)。",
             "如果源表和目标表字段同语义，应优先给出相同字段名。",
             "如果 Git 片段或元数据表明源表和目标表都存在同一业务事件字段，必须优先使用同一个字段名，不要退回到目标表的 etl_create_time。",
             "如果目标表不存在同名业务时间字段，应优先选择 dest_columns 中真实存在且语义最接近的业务时间字段，例如 finish_at、paid_at、success_at、completed_at。",
             "只有在目标表不存在可确认的业务事件时间字段时，才允许退回 etl_create_time 或 etl_update_time，并在 reason 中说明原因。",
+            "如果在现有证据下无法证明源表和目标表存在同一个可验证的业务限制字段，不要硬写一个貌似可跑的错误 SQL；应返回最合理草稿，并在 reason 中明确指出证据不足或映射未证实。",
             "如果源表和目标表最终使用不同字段，也必须返回 src_check_field、dest_check_field、src_sql 和 dest_sql 草稿，并在 reason 中解释差异原因。",
             "如果无法完全确定，也返回最合理草稿，并在 reason 中简要说明依据。",
             "如果 validation_feedback 明确指出上一版 SQL 虽然可运行但结果不一致，请优先根据该反馈修正校验口径，而不是重复输出相同 SQL。",

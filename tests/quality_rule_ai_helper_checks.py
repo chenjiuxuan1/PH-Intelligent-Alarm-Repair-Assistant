@@ -31,6 +31,9 @@ class QualityRuleAiHelperTests(unittest.TestCase):
         self.assertEqual(payload["source_columns"], ["create_at"])
         self.assertEqual(payload["dest_columns"], [])
         self.assertNotIn("table", payload)
+        self.assertIn("主驱动源表", messages[0]["content"])
+        self.assertIn("ods_paysvr_fee", messages[1]["content"])
+        self.assertIn("SUM(total_cost)", messages[1]["content"])
 
     def test_deadline_and_timeouts_default_to_disabled(self):
         with mock.patch.dict(module.os.environ, {}, clear=False):
