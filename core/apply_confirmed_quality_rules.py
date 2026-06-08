@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from config.config import QUALITY_RULE_FORM_CONFIG
 from core.quality_rule_confirmation import (
+    extract_sheet_row_number,
     filter_unprocessed_decision_rows,
     format_tv_apply_summary,
     fetch_confirmation_csv,
@@ -170,12 +171,54 @@ def main():
             bot_id=QUALITY_RULE_FORM_CONFIG.get("notify_bot_id"),
         )
 
+    applied_sheet_rows = sorted(
+        {
+            row_number
+            for row_number in (extract_sheet_row_number(item) for item in applied_items)
+            if row_number is not None
+        },
+        reverse=True,
+    )
+    disabled_sheet_rows = sorted(
+        {
+            row_number
+            for row_number in (extract_sheet_row_number(item) for item in disabled_items)
+            if row_number is not None
+        },
+        reverse=True,
+    )
+    processed_sheet_rows = sorted(set(applied_sheet_rows + disabled_sheet_rows), reverse=True)
+
     payload = {
         "approved_candidates": len(approved_items),
         "rejected_candidates": len(rejected_items),
         "applied_count": applied_count,
         "disabled_count": disabled_count,
         "validation_failed_count": len(validation_failed),
+        "applied_sheet_rows": applied_sheet_rows,
+        "disabled_sheet_rows": disabled_sheet_rows,
+        "processed_sheet_rows": processed_sheet_rows,
+        "processed_sheet_actions": [
+            {
+                "candidate_key": item.get("candidate_key", ""),
+                "database": item.get("database", ""),
+                "dest_tbl": item.get("dest_tbl", ""),
+                "action": "applied",
+                "sheet_row_number": extract_sheet_row_number(item),
+            }
+            for item in applied_items
+            if extract_sheet_row_number(item) is not None
+        ] + [
+            {
+                "candidate_key": item.get("candidate_key", ""),
+                "database": item.get("database", ""),
+                "dest_tbl": item.get("dest_tbl", ""),
+                "action": "disabled_auto_check",
+                "sheet_row_number": extract_sheet_row_number(item),
+            }
+            for item in disabled_items
+            if extract_sheet_row_number(item) is not None
+        ],
         "tv_result": tv_result,
     }
     if args.json:

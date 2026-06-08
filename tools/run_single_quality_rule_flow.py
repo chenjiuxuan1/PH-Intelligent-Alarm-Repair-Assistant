@@ -15,8 +15,11 @@ from config.config import QUALITY_RULE_FORM_CONFIG
 from core.quality_rule_confirmation import (
     build_candidate_key,
     compute_form_payload_signature,
+    fetch_confirmation_csv,
+    find_latest_requested_metric_field,
     load_backlog,
     merge_candidates_into_backlog,
+    parse_confirmation_rows,
     save_backlog,
     submit_backlog_items_to_form,
 )
@@ -100,12 +103,25 @@ def load_single_table(cursor, database, table_name):
     return cursor.fetchone(), "wattrel_etl_table_settings"
 
 
+def load_requested_metric_field(database, table_name):
+    export_url = (QUALITY_RULE_FORM_CONFIG.get("confirmation_export_url") or "").strip()
+    if not export_url:
+        return ""
+    try:
+        csv_text = fetch_confirmation_csv(export_url)
+        rows = parse_confirmation_rows(csv_text, QUALITY_RULE_FORM_CONFIG.get("confirmation_column_map", {}))
+        return find_latest_requested_metric_field(rows, database, table_name)
+    except Exception:
+        return ""
+
+
 def main():
     args = parse_args()
     database = args.database
     table_name = args.tbl
     detected_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     git_roots = args.git_roots or ["/data/git/starrocks/workflow/ph"]
+    requested_metric_field = load_requested_metric_field(database, table_name)
 
     conn = get_db_connection()
     try:
@@ -135,6 +151,7 @@ def main():
                 rules,
                 ods_map,
                 git_roots=git_roots,
+                requested_metric_field=requested_metric_field,
             )
         elif database in EXISTS_RULE_DATABASES:
             raw_result = build_exists_rule_candidate(
@@ -142,6 +159,8 @@ def main():
                 table,
                 rules,
                 git_roots=git_roots,
+                cursor=cur,
+                requested_metric_field=requested_metric_field,
             )
         else:
             result = {
@@ -165,6 +184,10 @@ def main():
         "database": database,
         **raw_result,
     }
+    if requested_metric_field:
+        result["requested_metric_field"] = requested_metric_field
+        if result.get("candidate"):
+            result["candidate"]["requested_metric_field"] = requested_metric_field
     if result.get("status") in {"existing", "skipped"}:
         emit(build_non_backlog_payload(database, table_name, result), load_langfuse_batch())
         return 0

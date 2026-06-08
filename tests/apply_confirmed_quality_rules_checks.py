@@ -29,6 +29,7 @@ def load_module():
             "operator": "operator",
             "notes": "notes",
             "submitted_at": "submitted_at",
+            "metric_field": "metric_field",
         },
         "notify_mentions": [],
         "notify_bot_id": "quality-test-bot",
@@ -36,6 +37,11 @@ def load_module():
 
     fake_confirmation = types.ModuleType("core.quality_rule_confirmation")
     fake_confirmation.format_tv_apply_summary = mock.MagicMock(return_value="summary")
+    fake_confirmation.extract_sheet_row_number = mock.MagicMock(
+        side_effect=lambda row: row.get("decision_sheet_row_number")
+        or row.get("sheet_row_number")
+        or row.get("row_number")
+    )
     fake_confirmation.fetch_confirmation_csv = mock.MagicMock(return_value="")
     fake_confirmation.filter_unprocessed_decision_rows = mock.MagicMock(side_effect=lambda rows, sync_state=None: rows)
     fake_confirmation.load_backlog = mock.MagicMock(return_value={"items": {}})
@@ -105,6 +111,7 @@ class ApplyConfirmedQualityRulesTests(unittest.TestCase):
                 "operator": "me",
                 "notes": "",
                 "submitted_at": "2026-06-08 12:00:00",
+                "sheet_row_number": 2,
             }
         ]
         fake_confirmation.load_backlog.return_value = {
@@ -126,7 +133,7 @@ class ApplyConfirmedQualityRulesTests(unittest.TestCase):
             }
         }
         fake_confirmation.update_backlog_with_decisions.return_value = (
-            [{**fake_confirmation.load_backlog.return_value["items"]["dwd::dwd.demo::cnt"], "status": "approved"}],
+            [{**fake_confirmation.load_backlog.return_value["items"]["dwd::dwd.demo::cnt"], "status": "approved", "decision_sheet_row_number": 2}],
             [],
         )
         fake_gap.apply_candidates.return_value = 1
@@ -148,6 +155,7 @@ class ApplyConfirmedQualityRulesTests(unittest.TestCase):
         fake_confirmation.parse_confirmation_rows.assert_called_once()
         payload = json.loads(buffer.getvalue())
         self.assertEqual(payload["applied_count"], 1)
+        self.assertEqual(payload["processed_sheet_rows"], [2])
         fake_gap.validate_candidates_for_apply.assert_not_called()
 
     def test_main_reads_confirmation_rows_from_base64_json(self):
@@ -165,6 +173,7 @@ class ApplyConfirmedQualityRulesTests(unittest.TestCase):
                 "operator": "me",
                 "notes": "",
                 "submitted_at": "2026-06-08 12:00:00",
+                "row_number": 8,
             }
         ]
         payload_b64 = base64.b64encode(json.dumps(decision_rows, ensure_ascii=False).encode("utf-8")).decode("utf-8")
@@ -188,7 +197,7 @@ class ApplyConfirmedQualityRulesTests(unittest.TestCase):
             }
         }
         fake_confirmation.update_backlog_with_decisions.return_value = (
-            [{**fake_confirmation.load_backlog.return_value["items"]["dwd::dwd.demo::cnt"], "status": "approved"}],
+            [{**fake_confirmation.load_backlog.return_value["items"]["dwd::dwd.demo::cnt"], "status": "approved", "row_number": 8}],
             [],
         )
         fake_gap.apply_candidates.return_value = 1
@@ -209,6 +218,7 @@ class ApplyConfirmedQualityRulesTests(unittest.TestCase):
         fake_confirmation.parse_confirmation_rows.assert_not_called()
         payload = json.loads(buffer.getvalue())
         self.assertEqual(payload["applied_count"], 1)
+        self.assertEqual(payload["applied_sheet_rows"], [8])
         fake_gap.validate_candidates_for_apply.assert_not_called()
 
     def test_main_does_not_validate_by_default(self):
@@ -269,6 +279,7 @@ class ApplyConfirmedQualityRulesTests(unittest.TestCase):
         payload = json.loads(buffer.getvalue())
         self.assertEqual(payload["applied_count"], 1)
         self.assertEqual(payload["validation_failed_count"], 0)
+        self.assertEqual(payload["processed_sheet_rows"], [])
         fake_gap.validate_candidates_for_apply.assert_not_called()
         fake_gap.apply_candidates.assert_called_once()
         fake_confirmation.mark_processed_decisions.assert_any_call(mock.ANY, mock.ANY, action="applied")
@@ -336,6 +347,7 @@ class ApplyConfirmedQualityRulesTests(unittest.TestCase):
         payload = json.loads(buffer.getvalue())
         self.assertEqual(payload["applied_count"], 0)
         self.assertEqual(payload["validation_failed_count"], 1)
+        self.assertEqual(payload["processed_sheet_rows"], [])
         fake_gap.validate_candidates_for_apply.assert_called_once()
         fake_gap.apply_candidates.assert_called_once_with([])
         fake_confirmation.save_sync_state.assert_not_called()
@@ -375,6 +387,7 @@ class ApplyConfirmedQualityRulesTests(unittest.TestCase):
         payload = json.loads(buffer.getvalue())
         self.assertEqual(payload["approved_candidates"], 0)
         self.assertEqual(payload["applied_count"], 0)
+        self.assertEqual(payload["processed_sheet_rows"], [])
         fake_confirmation.update_backlog_with_decisions.assert_called_once_with({"items": {}}, [])
         fake_gap.apply_candidates.assert_called_once_with([])
 

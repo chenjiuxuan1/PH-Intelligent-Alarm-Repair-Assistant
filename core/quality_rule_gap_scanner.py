@@ -430,6 +430,59 @@ def build_sql_statements(src_db, src_table, target_db, target_table, src_check_f
     return src_sql, dest_sql
 
 
+def normalize_requested_metric_field(value):
+    return (value or "").strip()
+
+
+def build_requested_metric_candidate_with_ai(
+    database_name,
+    table,
+    target_table,
+    target_db,
+    requested_metric_field,
+    git_roots=None,
+    cursor=None,
+):
+    metric_field = normalize_requested_metric_field(requested_metric_field)
+    if not metric_field:
+        return None
+
+    ai_table = enrich_ai_schema_context(table, cursor=cursor)
+    ai_table["requested_metric_field"] = metric_field
+    ai_reason = (
+        f"确认表指定需要校验的内容字段: {metric_field}。"
+        "请优先围绕这个字段生成可比较的单指标校验 SQL，不要回退到默认 count(*) 或 if_exists。"
+    )
+    ai_candidate, ai_meta = call_ai_candidate(
+        database_name,
+        ai_table,
+        ai_reason,
+        git_roots=git_roots,
+    )
+    if ai_candidate:
+        ai_candidate["requested_metric_field"] = metric_field
+        return finalize_candidate_with_validation(
+            database_name,
+            target_table,
+            ai_candidate.get("dest_db") or target_db,
+            ai_candidate,
+            ai_table,
+            git_roots=git_roots,
+            cursor=cursor,
+            base_reason=f"确认表指定字段 {metric_field}，按指定字段生成规则",
+            ai_status=ai_meta.get("status", ""),
+        )
+
+    return blocked_result_with_ai_draft(
+        ai_table,
+        target_table,
+        target_db,
+        ai_meta,
+        f"确认表指定字段 {metric_field}，但 AI 未能生成对应校验 SQL",
+        fallback={"check_field": ai_table.get("check_field") or ""},
+    )
+
+
 def fetch_rows(cursor, sql, params=None):
     cursor.execute(sql, params or ())
     return cursor.fetchall()
@@ -897,8 +950,17 @@ def list_pending_generation_tables(databases=None, monitor_level=None):
         conn.close()
 
 
-def build_count_rule_candidate(database_name, table, rule_map, ods_table_by_dest, git_roots=None, cursor=None):
+def build_count_rule_candidate(
+    database_name,
+    table,
+    rule_map,
+    ods_table_by_dest,
+    git_roots=None,
+    cursor=None,
+    requested_metric_field=None,
+):
     target_table = table["dest_tbl"] if database_name in ("ods", "ods_security") else table["tbl"]
+    requested_metric_field = normalize_requested_metric_field(requested_metric_field or table.get("requested_metric_field"))
     existing_rule = rule_map.get(target_table, {}).get(COUNT_RULE_NAME)
     if existing_rule:
         return {
@@ -936,15 +998,23 @@ def build_count_rule_candidate(database_name, table, rule_map, ods_table_by_dest
                     **table,
                     "dest_tbl": target_table,
                     "dest_db": table.get("dest_db") or table.get("db"),
+                    "requested_metric_field": requested_metric_field,
                 },
                 cursor=cursor,
             )
-            ai_candidate, ai_meta = call_ai_candidate(
-                database_name,
-                ai_table,
-                enrich_error,
-                git_roots=git_roots,
-            )
+            if requested_metric_field:
+                ai_result = build_requested_metric_candidate_with_ai(
+                    database_name,
+                    ai_table,
+                    target_table,
+                    ai_table.get("dest_db") or table.get("db"),
+                    requested_metric_field,
+                    git_roots=git_roots,
+                    cursor=cursor,
+                )
+                if ai_result:
+                    return ai_result
+            ai_candidate, ai_meta = call_ai_candidate(database_name, ai_table, enrich_error, git_roots=git_roots)
             if ai_candidate:
                 return finalize_candidate_with_validation(
                     database_name,
@@ -966,6 +1036,18 @@ def build_count_rule_candidate(database_name, table, rule_map, ods_table_by_dest
             )
 
     working_table = enrich_ai_schema_context(working_table, cursor=cursor)
+    if requested_metric_field:
+        custom_result = build_requested_metric_candidate_with_ai(
+            database_name,
+            working_table,
+            target_table,
+            working_table.get("dest_db") or working_table.get("db"),
+            requested_metric_field,
+            git_roots=git_roots,
+            cursor=cursor,
+        )
+        if custom_result:
+            return custom_result
 
     if database_name != "dim":
         src_check_field = infer_source_check_field(working_table, git_roots=git_roots)
@@ -1444,8 +1526,24 @@ def infer_exists_target_check_field(table, git_roots=None):
     return None
 
 
-def build_exists_rule_candidate(database_name, table, rule_map, git_roots=None):
+def build_exists_rule_candidate(database_name, table, rule_map, git_roots=None, cursor=None, requested_metric_field=None):
     target_table = table["tbl"]
+    requested_metric_field = normalize_requested_metric_field(requested_metric_field or table.get("requested_metric_field"))
+    if requested_metric_field:
+        return build_requested_metric_candidate_with_ai(
+            database_name,
+            {
+                **table,
+                "dest_tbl": target_table,
+                "dest_db": table.get("db"),
+                "requested_metric_field": requested_metric_field,
+            },
+            target_table,
+            table.get("db"),
+            requested_metric_field,
+            git_roots=git_roots,
+            cursor=cursor,
+        )
     existing_rule = rule_map.get(target_table, {}).get(EXISTS_RULE_NAME)
     if existing_rule:
         return {

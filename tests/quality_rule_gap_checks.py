@@ -834,6 +834,46 @@ class QualityRuleGapScannerTests(unittest.TestCase):
         self.assertEqual(result["status"], "blocked")
         self.assertIn("etl_create_time", result["reason"])
 
+    def test_build_count_rule_candidate_uses_requested_metric_field_override(self):
+        module = load_module()
+        table = {
+            "id": 1,
+            "db": "dwd_sec",
+            "tbl": "dwd_cst_pay_cost_detail",
+            "dep_tbls": json.dumps(["ods_paysvr_fee"]),
+            "increment_field": "fee_finish_at",
+            "check_field": "fee_finish_at",
+        }
+        ods_table_by_dest = {
+            "ods_paysvr_fee": {
+                "dest_tbl": "ods_paysvr_fee",
+                "check_field": "fee_finish_at",
+                "columns": json.dumps(["fee_finish_at", "fee_amount"]),
+                "src_tbl": "paysvr_fee",
+            }
+        }
+
+        with mock.patch.object(module, "build_requested_metric_candidate_with_ai") as mocked_builder:
+            mocked_builder.return_value = {
+                "status": "candidate",
+                "rule_name": "cnt",
+                "dest_tbl": "dwd_cst_pay_cost_detail",
+                "dest_db": "dwd_sec",
+                "reason": "确认表指定字段 total_cost，按指定字段生成规则",
+                "candidate": {"requested_metric_field": "total_cost"},
+            }
+            result = module.build_count_rule_candidate(
+                "dwd_sec",
+                table,
+                {},
+                ods_table_by_dest,
+                requested_metric_field="total_cost",
+            )
+
+        self.assertEqual(result["status"], "candidate")
+        self.assertEqual(result["candidate"]["requested_metric_field"], "total_cost")
+        self.assertEqual(mocked_builder.call_args.args[4], "total_cost")
+
     def test_scan_quality_rule_gaps_mirrors_database_scope(self):
         fake_cursor = FakeCursor(
             [

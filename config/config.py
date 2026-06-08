@@ -268,6 +268,7 @@ QUALITY_RULE_FORM_CONFIG = {
                     "database": "数据库",
                     "tbl": "表名",
                     "need_apply": "是否上线",
+                    "metric_field": "需要校验的内容字段",
                     "candidate_key": "唯一键",
                     "src_sql": "src_sql",
                     "dest_sql": "dest_sql",

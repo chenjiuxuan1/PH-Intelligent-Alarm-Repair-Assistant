@@ -28,6 +28,7 @@ class QualityRuleAiHelperTests(unittest.TestCase):
         self.assertEqual(payload["task"], "generate_metric_rule_candidate")
         self.assertEqual(payload["dest_tbl"], "dwd_cst_pay_cost_detail")
         self.assertEqual(payload["src_tbl"], "ods_repay_cpop_income_item")
+        self.assertEqual(payload["requested_metric_field"], "")
         self.assertEqual(payload["source_columns"], ["create_at"])
         self.assertEqual(payload["dest_columns"], [])
         self.assertNotIn("table", payload)
@@ -35,6 +36,25 @@ class QualityRuleAiHelperTests(unittest.TestCase):
         self.assertIn("ods_paysvr_fee", messages[1]["content"])
         self.assertIn("SUM(total_cost)", messages[1]["content"])
         self.assertIn("ROUND(SUM(total_cost), 6)", messages[1]["content"])
+
+    def test_build_ai_messages_includes_requested_metric_field_when_present(self):
+        messages = module.build_ai_messages(
+            "dwd_sec",
+            {
+                "db": "dwd_sec",
+                "tbl": "dwd_cst_pay_cost_detail",
+                "src_db": "ods",
+                "src_tbl": "ods_paysvr_fee",
+                "requested_metric_field": "total_cost",
+                "columns": ["fee_finish_at", "fee_amount"],
+                "dest_columns": ["fee_finish_at", "total_cost"],
+            },
+            [],
+            "用户指定字段",
+        )
+
+        payload = json.loads(messages[1]["content"])
+        self.assertEqual(payload["requested_metric_field"], "total_cost")
 
     def test_deadline_and_timeouts_default_to_disabled(self):
         with mock.patch.dict(module.os.environ, {}, clear=False):

@@ -115,6 +115,9 @@ class RunSingleQualityRuleFlowTests(unittest.TestCase):
             )
         )
         module.build_candidate_key = mock.MagicMock(return_value="dwd::dwd.dwd_demo::cnt")
+        module.fetch_confirmation_csv = mock.MagicMock(return_value="database,tbl,metric_field\n")
+        module.parse_confirmation_rows = mock.MagicMock(return_value=[])
+        module.find_latest_requested_metric_field = mock.MagicMock(return_value="")
         module.submit_backlog_items_to_form = mock.MagicMock(
             return_value={"submitted": 1, "results": [{"candidate_key": "dwd::dwd.dwd_demo::cnt", "ok": True}]}
         )
@@ -139,6 +142,44 @@ class RunSingleQualityRuleFlowTests(unittest.TestCase):
         payload = json.loads(payload_text)
         self.assertEqual(payload["tv_result"]["reason"], "deferred_batch_notification")
         self.assertEqual(payload["new_candidate_keys"], ["dwd::dwd.dwd_demo::cnt"])
+
+    def test_main_passes_requested_metric_field_to_generation(self):
+        module = load_module()
+
+        fake_conn = mock.MagicMock()
+        fake_cursor = mock.MagicMock()
+        fake_conn.cursor.return_value = fake_cursor
+        module.get_db_connection = mock.MagicMock(return_value=fake_conn)
+        module.load_single_table = mock.MagicMock(return_value=({"tbl": "dwd_demo"}, "wattrel_etl_table_settings"))
+        module.load_quality_rules = mock.MagicMock(return_value=[])
+        module.load_ods_table_by_dest = mock.MagicMock(return_value={})
+        module.fetch_confirmation_csv = mock.MagicMock(return_value="database,tbl,metric_field\n")
+        module.parse_confirmation_rows = mock.MagicMock(return_value=[{"database": "dwd", "tbl": "dwd_demo", "metric_field": "total_cost", "submitted_at": "2026-06-08 10:00:00"}])
+        module.find_latest_requested_metric_field = mock.MagicMock(return_value="total_cost")
+        module.build_count_rule_candidate = mock.MagicMock(
+            return_value={
+                "status": "existing",
+                "rule_name": "cnt",
+                "dest_tbl": "dwd_demo",
+                "dest_db": "dwd",
+                "reason": "已存在 cnt 规则",
+            }
+        )
+        module.load_langfuse_batch = mock.MagicMock(return_value={"batch": []})
+
+        argv_backup = sys.argv
+        stdout_backup = sys.stdout
+        sys.argv = ["run_single_quality_rule_flow.py", "--database", "dwd", "--tbl", "dwd_demo"]
+        buffer = io.StringIO()
+        sys.stdout = buffer
+        try:
+            exit_code = module.main()
+        finally:
+            sys.argv = argv_backup
+            sys.stdout = stdout_backup
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(module.build_count_rule_candidate.call_args.kwargs["requested_metric_field"], "total_cost")
 
 
 if __name__ == "__main__":

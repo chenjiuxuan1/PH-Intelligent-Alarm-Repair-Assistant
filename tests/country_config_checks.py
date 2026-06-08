@@ -153,6 +153,7 @@ class CountryConfigTests(unittest.TestCase):
         self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["confirmation_column_map"]["database"], "数据库")
         self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["confirmation_column_map"]["tbl"], "表名")
         self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["confirmation_column_map"]["need_apply"], "是否上线")
+        self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["confirmation_column_map"]["metric_field"], "需要校验的内容字段")
         self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["confirmation_column_map"]["candidate_key"], "唯一键")
         self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["confirmation_column_map"]["submitted_at"], "时间")
         self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["field_map"]["country"], "entry.531558451")

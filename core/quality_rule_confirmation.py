@@ -63,6 +63,10 @@ def build_candidate_key(item):
     return f"{item['database']}::{item['dest_db']}.{item['dest_tbl']}::{item['rule_name']}"
 
 
+def normalize_requested_metric_field(value):
+    return (value or "").strip()
+
+
 def candidate_to_backlog_item(item, detected_at=None):
     detected_at = detected_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     candidate = item["candidate"]
@@ -77,6 +81,7 @@ def candidate_to_backlog_item(item, detected_at=None):
         "src_db": candidate.get("src_db", ""),
         "src_tbl": candidate.get("src_tbl", ""),
         "check_field": candidate.get("check_field") or "",
+        "requested_metric_field": normalize_requested_metric_field(candidate.get("requested_metric_field")),
         "src_sql": candidate.get("src_sql", ""),
         "dest_sql": candidate.get("dest_sql", ""),
         "reason": item.get("reason", ""),
@@ -100,6 +105,7 @@ def candidate_to_backlog_item(item, detected_at=None):
         "decision_notes": "",
         "decision_operator": "",
         "decision_submitted_at": "",
+        "decision_requested_metric_field": "",
         "applied_at": "",
     }
 
@@ -120,6 +126,7 @@ def result_to_backlog_item(item, detected_at=None):
         "src_db": item.get("src_db", ""),
         "src_tbl": item.get("src_tbl", ""),
         "check_field": item.get("check_field") or "",
+        "requested_metric_field": normalize_requested_metric_field(item.get("requested_metric_field")),
         "src_sql": item.get("src_sql", ""),
         "dest_sql": item.get("dest_sql", ""),
         "reason": item.get("reason", ""),
@@ -143,6 +150,7 @@ def result_to_backlog_item(item, detected_at=None):
         "decision_notes": "",
         "decision_operator": "",
         "decision_submitted_at": "",
+        "decision_requested_metric_field": "",
         "applied_at": "",
     }
 
@@ -182,6 +190,8 @@ def merge_candidates_into_backlog(results, backlog=None, detected_at=None):
                 "decision_src_sql": existing.get("decision_src_sql", ""),
                 "decision_dest_sql": existing.get("decision_dest_sql", ""),
                 "decision_human_check": existing.get("decision_human_check", ""),
+                "decision_requested_metric_field": existing.get("decision_requested_metric_field", ""),
+                "requested_metric_field": existing.get("requested_metric_field", ""),
                 "applied_at": existing.get("applied_at", ""),
                 "rescan_at": detected_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }
@@ -403,22 +413,38 @@ def fetch_confirmation_csv(export_url):
 def parse_confirmation_rows(csv_text, column_map):
     reader = csv.DictReader(csv_text.splitlines())
     rows = []
-    for raw_row in reader:
+    for row_number, raw_row in enumerate(reader, start=2):
         item = {}
         for logical_key, column_name in column_map.items():
             item[logical_key] = raw_row.get(column_name, "").strip()
+        item["sheet_row_number"] = row_number
         rows.append(item)
     return rows
+
+
+def extract_sheet_row_number(row):
+    for key in ("decision_sheet_row_number", "sheet_row_number", "row_number", "_rowNumber", "rowIndex", "__sheet_row_number"):
+        value = row.get(key)
+        if value in (None, ""):
+            continue
+        try:
+            row_number = int(str(value).strip())
+        except (TypeError, ValueError):
+            continue
+        if row_number >= 2:
+            return row_number
+    return None
 
 
 def build_decision_signature(row):
     candidate_key = infer_candidate_key_from_row(row)
     submitted_at = (row.get("submitted_at") or "").strip()
     need_apply = (row.get("need_apply") or "").strip()
+    metric_field = normalize_requested_metric_field(row.get("metric_field"))
     src_sql = (row.get("src_sql") or "").strip()
     dest_sql = (row.get("dest_sql") or "").strip()
     human_check = (row.get("human_check") or "").strip()
-    return "||".join([candidate_key, submitted_at, need_apply, human_check, src_sql, dest_sql])
+    return "||".join([candidate_key, submitted_at, need_apply, human_check, metric_field, src_sql, dest_sql])
 
 
 def filter_unprocessed_decision_rows(rows, sync_state=None):
@@ -471,6 +497,26 @@ def latest_decisions_by_candidate(rows):
     return decisions
 
 
+def find_latest_requested_metric_field(rows, database, tbl):
+    database = (database or "").strip()
+    tbl = (tbl or "").strip()
+    latest_row = None
+    for row in rows:
+        row_database = (row.get("database") or "").strip()
+        row_tbl = (row.get("tbl") or row.get("dest_tbl") or "").strip()
+        metric_field = normalize_requested_metric_field(row.get("metric_field"))
+        if not metric_field:
+            continue
+        if row_database != database or row_tbl != tbl:
+            continue
+        submitted_at = (row.get("submitted_at") or "").strip()
+        if latest_row is None or submitted_at >= (latest_row.get("submitted_at") or ""):
+            latest_row = row
+    if latest_row is None:
+        return ""
+    return normalize_requested_metric_field(latest_row.get("metric_field"))
+
+
 def update_backlog_with_decisions(backlog, decision_rows):
     items = backlog.setdefault("items", {})
     latest = latest_decisions_by_candidate(decision_rows)
@@ -492,7 +538,11 @@ def update_backlog_with_decisions(backlog, decision_rows):
         item["decision_submitted_at"] = row.get("submitted_at", "")
         item["decision_src_sql"] = row.get("src_sql", "")
         item["decision_dest_sql"] = row.get("dest_sql", "")
+        item["decision_requested_metric_field"] = normalize_requested_metric_field(row.get("metric_field"))
+        if item["decision_requested_metric_field"]:
+            item["requested_metric_field"] = item["decision_requested_metric_field"]
         item["decision_human_check"] = row.get("human_check", "")
+        item["decision_sheet_row_number"] = extract_sheet_row_number(row)
         item["decision_signature"] = build_decision_signature(row)
         item["status"] = "approved" if need_apply_is_enabled(item["decision"]) else "rejected"
         if item["status"] == "approved":
@@ -517,6 +567,7 @@ def mark_processed_decisions(sync_state, items, action):
                     "submitted_at": item.get("decision_submitted_at", ""),
                     "need_apply": item.get("decision", ""),
                     "human_check": item.get("decision_human_check", ""),
+                    "metric_field": item.get("decision_requested_metric_field") or item.get("requested_metric_field", ""),
                     "src_sql": item.get("decision_src_sql") or item.get("src_sql", ""),
                     "dest_sql": item.get("decision_dest_sql") or item.get("dest_sql", ""),
                     "database": item.get("database", ""),

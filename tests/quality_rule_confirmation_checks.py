@@ -40,6 +40,7 @@ def load_module():
             "database": "database",
             "tbl": "tbl",
             "need_apply": "need_apply",
+            "metric_field": "metric_field",
             "src_sql": "src_sql",
             "dest_sql": "dest_sql",
             "human_check": "human_check",
@@ -421,6 +422,7 @@ class QualityRuleConfirmationTests(unittest.TestCase):
         self.assertEqual(rows[0]["need_apply"], "1")
         self.assertEqual(rows[0]["human_check"], "1")
         self.assertEqual(rows[0]["operator"], "alice")
+        self.assertEqual(rows[0]["sheet_row_number"], 2)
 
     def test_update_backlog_with_decisions_marks_approved_items(self):
         module, _ = load_module()
@@ -434,6 +436,7 @@ class QualityRuleConfirmationTests(unittest.TestCase):
                 "database": "dwd",
                 "tbl": "dwd_user_member_log",
                 "need_apply": "1",
+                "metric_field": "total_cost",
                 "src_sql": "select override_src",
                 "dest_sql": "select override_dest",
                 "human_check": "1",
@@ -450,7 +453,59 @@ class QualityRuleConfirmationTests(unittest.TestCase):
         self.assertEqual(backlog_item["status"], "approved")
         self.assertEqual(backlog_item["decision_src_sql"], "select override_src")
         self.assertEqual(backlog_item["decision_dest_sql"], "select override_dest")
+        self.assertEqual(backlog_item["decision_requested_metric_field"], "total_cost")
+        self.assertEqual(backlog_item["requested_metric_field"], "total_cost")
         self.assertEqual(backlog_item["decision_operator"], "alice")
+        self.assertIsNone(backlog_item.get("decision_sheet_row_number"))
+
+    def test_update_backlog_with_decisions_keeps_sheet_row_number(self):
+        module, _ = load_module()
+        backlog_item = module.candidate_to_backlog_item(self.make_candidate_result(), detected_at="2026-06-04 12:00:00")
+        backlog = {"items": {backlog_item["candidate_key"]: backlog_item}}
+        decision_rows = [
+            {
+                "candidate_key": backlog_item["candidate_key"],
+                "database": "dwd",
+                "tbl": "dwd_user_member_log",
+                "need_apply": "1",
+                "human_check": "1",
+                "submitted_at": "2026-06-04 18:00:00",
+                "sheet_row_number": 9,
+            }
+        ]
+
+        approved, rejected = module.update_backlog_with_decisions(backlog, decision_rows)
+
+        self.assertEqual(len(approved), 1)
+        self.assertEqual(rejected, [])
+        self.assertEqual(backlog_item["decision_sheet_row_number"], 9)
+
+    def test_find_latest_requested_metric_field_prefers_latest_matching_row(self):
+        module, _ = load_module()
+        rows = [
+            {
+                "database": "dwd",
+                "tbl": "dwd_user_member_log",
+                "metric_field": "",
+                "submitted_at": "2026-06-04 10:00:00",
+            },
+            {
+                "database": "dwd",
+                "tbl": "dwd_user_member_log",
+                "metric_field": "order_cnt",
+                "submitted_at": "2026-06-04 11:00:00",
+            },
+            {
+                "database": "dwd",
+                "tbl": "dwd_user_member_log",
+                "metric_field": "total_cost",
+                "submitted_at": "2026-06-04 12:00:00",
+            },
+        ]
+
+        result = module.find_latest_requested_metric_field(rows, "dwd", "dwd_user_member_log")
+
+        self.assertEqual(result, "total_cost")
 
     def test_build_form_payload_requires_candidate_key(self):
         module, _ = load_module()
