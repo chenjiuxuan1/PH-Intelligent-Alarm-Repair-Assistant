@@ -341,6 +341,37 @@ class QualityRuleGapScannerTests(unittest.TestCase):
         self.assertEqual(result["validation_status"], "validation_failed")
         self.assertIn("SR Gateway HTTP 403", result["validation_error"])
 
+    def test_validate_candidate_sql_syntax_uses_explain_for_select_queries(self):
+        fake_cursor = FakeCursor([])
+        module = load_module()
+        candidate = {
+            "src_sql": "SELECT COUNT(*) AS cnt FROM ods.a WHERE create_at >= '{begin}' AND create_at < '{end}'",
+            "dest_sql": "SELECT COUNT(*) AS cnt FROM dwd.b WHERE fee_finish_at >= '{begin}' AND fee_finish_at < '{end}'",
+        }
+
+        result = module.validate_candidate_sql_syntax(fake_cursor, candidate)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["validation_status"], "syntax_ok")
+        self.assertTrue(fake_cursor.executed[0][0].lstrip().startswith("EXPLAIN SELECT COUNT(*)"))
+        self.assertTrue(fake_cursor.executed[1][0].lstrip().startswith("EXPLAIN SELECT COUNT(*)"))
+
+    def test_validate_candidate_sql_syntax_returns_failed_when_gateway_rejects(self):
+        module = load_module()
+        module.QUALITY_RULE_VALIDATION_CONFIG["backend"] = "sr_gateway"
+        candidate = {
+            "src_sql": "SELECT COUNT(*) AS cnt FROM ods.a WHERE create_at >= '{begin}' AND create_at < '{end}'",
+            "dest_sql": "SELECT COUNT(*) AS cnt FROM dwd.b WHERE fee_finish_at >= '{begin}' AND fee_finish_at < '{end}'",
+            "country": "ph",
+        }
+
+        with mock.patch.object(module, "request_sr_gateway_json", side_effect=RuntimeError("SR Gateway HTTP 403: denied")):
+            result = module.validate_candidate_sql_syntax(None, candidate)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["validation_status"], "syntax_failed")
+        self.assertIn("SR Gateway HTTP 403", result["validation_error"])
+
     def test_finalize_candidate_with_validation_retries_ai_once_on_mismatch(self):
         fake_cursor = FakeCursor([[{"cnt": 3}], [{"cnt": 5}], [{"cnt": 3}], [{"cnt": 3}]])
         fake_conn = FakeConnection(fake_cursor)

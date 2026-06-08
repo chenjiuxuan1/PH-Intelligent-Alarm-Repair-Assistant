@@ -702,6 +702,73 @@ def execute_metric_sql_with_validation_backend(cursor, sql_text, begin, end, can
     return execute_metric_sql_via_sr_gateway(sql_text, begin, end, sr_validation_country(candidate))
 
 
+def build_syntax_probe_statement(statement):
+    lowered = statement.lstrip().lower()
+    if lowered.startswith(("select ", "with ")):
+        return f"EXPLAIN {statement}"
+    return statement
+
+
+def validate_sql_syntax_with_validation_backend(cursor, sql_text, begin, end, candidate=None):
+    statements = split_sql_statements(sql_text, begin, end)
+    if not statements:
+        raise ValueError("缺少待执行 SQL")
+
+    if validation_backend() == "db":
+        for statement in statements:
+            cursor.execute(build_syntax_probe_statement(statement))
+        return statements
+
+    country = sr_validation_country(candidate)
+    for statement in statements:
+        payload = {
+            "taskName": "quality-rule-syntax-check",
+            "country": country,
+            "purpose": "agent",
+            "accessMode": sr_validation_access_mode(),
+            "sqlMode": "query",
+            "sql": build_syntax_probe_statement(statement),
+            "page": 1,
+            "pageSize": 20,
+            "timeoutSec": sr_validation_timeout_sec(),
+        }
+        request_sr_gateway_json(payload, timeout_sec=sr_validation_timeout_sec())
+    return statements
+
+
+def validate_candidate_sql_syntax(cursor, candidate):
+    begin, end = build_validation_window()
+    try:
+        src_statements = validate_sql_syntax_with_validation_backend(
+            cursor, candidate.get("src_sql", ""), begin, end, candidate=candidate
+        )
+        dest_statements = validate_sql_syntax_with_validation_backend(
+            cursor, candidate.get("dest_sql", ""), begin, end, candidate=candidate
+        )
+    except Exception as exc:
+        return {
+            "ok": False,
+            "reason": f"SQL 语法校验失败: {exc}",
+            "validation_status": "syntax_failed",
+            "validation_error": str(exc),
+            "validation_window_begin": begin,
+            "validation_window_end": end,
+            "src_statements": [],
+            "dest_statements": [],
+        }
+
+    return {
+        "ok": True,
+        "reason": "SQL 语法校验通过",
+        "validation_status": "syntax_ok",
+        "validation_error": "",
+        "validation_window_begin": begin,
+        "validation_window_end": end,
+        "src_statements": src_statements,
+        "dest_statements": dest_statements,
+    }
+
+
 def enrich_ai_schema_context(table, cursor=None):
     table = deepcopy(table)
     own_conn = None
@@ -1528,6 +1595,42 @@ def validate_candidates(results):
     for item in candidate_items:
         candidate = item["candidate"]
         result = validate_candidate_sql(None, candidate)
+        wrapped = {**item, "candidate": candidate, **result}
+        if result["ok"]:
+            passed.append(wrapped)
+        else:
+            failed.append(wrapped)
+    return {"passed": passed, "failed": failed}
+
+
+def validate_candidates_for_apply(results):
+    candidate_items = [item for item in results if item.get("status") == "candidate"]
+    if not candidate_items:
+        return {"passed": [], "failed": []}
+
+    if validation_backend() == "db":
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cursor:
+                passed = []
+                failed = []
+                for item in candidate_items:
+                    candidate = item["candidate"]
+                    result = validate_candidate_sql_syntax(cursor, candidate)
+                    wrapped = {**item, "candidate": candidate, **result}
+                    if result["ok"]:
+                        passed.append(wrapped)
+                    else:
+                        failed.append(wrapped)
+                return {"passed": passed, "failed": failed}
+        finally:
+            conn.close()
+
+    passed = []
+    failed = []
+    for item in candidate_items:
+        candidate = item["candidate"]
+        result = validate_candidate_sql_syntax(None, candidate)
         wrapped = {**item, "candidate": candidate, **result}
         if result["ok"]:
             passed.append(wrapped)

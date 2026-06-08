@@ -18,7 +18,7 @@ from core.quality_rule_confirmation import (
     save_backlog,
     update_backlog_with_decisions,
 )
-from core.quality_rule_gap_scanner import apply_candidates, disable_auto_check_for_items, validate_candidates
+from core.quality_rule_gap_scanner import apply_candidates, disable_auto_check_for_items, validate_candidates_for_apply
 
 
 def parse_args():
@@ -81,7 +81,7 @@ def main():
         if item.get("status") == "approved" and not item.get("applied_at")
     ]
 
-    validation = validate_candidates(candidate_payload)
+    validation = validate_candidates_for_apply(candidate_payload)
     validated_keys = {
         row["candidate"].get("candidate_key") or row.get("candidate_key")
         for row in validation["passed"]
