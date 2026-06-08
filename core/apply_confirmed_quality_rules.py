@@ -23,17 +23,21 @@ from core.quality_rule_gap_scanner import apply_candidates, disable_auto_check_f
 def parse_args():
     parser = argparse.ArgumentParser(description="Read Google Form/Sheet confirmations and apply approved quality rules.")
     parser.add_argument("--export-url", default=QUALITY_RULE_FORM_CONFIG.get("confirmation_export_url", ""))
+    parser.add_argument("--csv-file", default="", help="Read confirmation rows from a local CSV file instead of Google export URL.")
     parser.add_argument("--json", action="store_true")
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
-    if not args.export_url:
+    if not args.csv_file and not args.export_url:
         print("未配置 QUALITY_RULE_CONFIRMATION_EXPORT_URL")
         return 1
 
-    csv_text = fetch_confirmation_csv(args.export_url)
+    if args.csv_file:
+        csv_text = Path(args.csv_file).read_text(encoding="utf-8")
+    else:
+        csv_text = fetch_confirmation_csv(args.export_url)
     decision_rows = parse_confirmation_rows(csv_text, QUALITY_RULE_FORM_CONFIG.get("confirmation_column_map", {}))
 
     backlog = load_backlog()
