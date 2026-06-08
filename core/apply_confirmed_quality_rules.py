@@ -30,6 +30,11 @@ def parse_args():
         default="",
         help="Base64-encoded JSON array of confirmation rows. Preferred for n8n Google Sheets connector integration.",
     )
+    parser.add_argument(
+        "--validate-syntax",
+        action="store_true",
+        help="Validate approved SQL before apply. Disabled by default for human-confirmed apply flows.",
+    )
     parser.add_argument("--json", action="store_true")
     return parser.parse_args()
 
@@ -81,25 +86,34 @@ def main():
         if item.get("status") == "approved" and not item.get("applied_at")
     ]
 
-    validation = validate_candidates_for_apply(candidate_payload)
-    validated_keys = {
-        row["candidate"].get("candidate_key") or row.get("candidate_key")
-        for row in validation["passed"]
-    }
-    apply_payload = [
-        item for item in candidate_payload
-        if item["candidate_key"] in validated_keys
-    ]
     validation_failed = []
-    failed_lookup = {
-        (row["candidate"].get("candidate_key") or row.get("candidate_key")): row["reason"]
-        for row in validation["failed"]
-    }
-    for item in approved_items:
-        if item["candidate_key"] in failed_lookup:
-            item["status"] = "validation_failed"
-            item["decision_notes"] = failed_lookup[item["candidate_key"]]
-            validation_failed.append({"country": item["country"], "database": item["database"], "dest_tbl": item["dest_tbl"], "reason": failed_lookup[item["candidate_key"]]})
+    apply_payload = candidate_payload
+    if args.validate_syntax:
+        validation = validate_candidates_for_apply(candidate_payload)
+        validated_keys = {
+            row["candidate"].get("candidate_key") or row.get("candidate_key")
+            for row in validation["passed"]
+        }
+        apply_payload = [
+            item for item in candidate_payload
+            if item["candidate_key"] in validated_keys
+        ]
+        failed_lookup = {
+            (row["candidate"].get("candidate_key") or row.get("candidate_key")): row["reason"]
+            for row in validation["failed"]
+        }
+        for item in approved_items:
+            if item["candidate_key"] in failed_lookup:
+                item["status"] = "validation_failed"
+                item["decision_notes"] = failed_lookup[item["candidate_key"]]
+                validation_failed.append(
+                    {
+                        "country": item["country"],
+                        "database": item["database"],
+                        "dest_tbl": item["dest_tbl"],
+                        "reason": failed_lookup[item["candidate_key"]],
+                    }
+                )
 
     applied_count = apply_candidates(apply_payload)
     if applied_count:
