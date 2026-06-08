@@ -1,6 +1,7 @@
 import importlib.util
 import io
 import json
+import base64
 import sys
 import tempfile
 import types
@@ -144,6 +145,70 @@ class ApplyConfirmedQualityRulesTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         fake_confirmation.fetch_confirmation_csv.assert_not_called()
         fake_confirmation.parse_confirmation_rows.assert_called_once()
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["applied_count"], 1)
+
+    def test_main_reads_confirmation_rows_from_base64_json(self):
+        module, fake_confirmation, fake_gap = load_module()
+
+        decision_rows = [
+            {
+                "candidate_key": "dwd::dwd.demo::cnt",
+                "database": "dwd",
+                "tbl": "demo",
+                "need_apply": "1",
+                "human_check": "1",
+                "src_sql": "select 1",
+                "dest_sql": "select 2",
+                "operator": "me",
+                "notes": "",
+                "submitted_at": "2026-06-08 12:00:00",
+            }
+        ]
+        payload_b64 = base64.b64encode(json.dumps(decision_rows, ensure_ascii=False).encode("utf-8")).decode("utf-8")
+
+        fake_confirmation.load_backlog.return_value = {
+            "items": {
+                "dwd::dwd.demo::cnt": {
+                    "candidate_key": "dwd::dwd.demo::cnt",
+                    "country": "ph",
+                    "database": "dwd",
+                    "dest_db": "dwd",
+                    "dest_tbl": "demo",
+                    "rule_name": "cnt",
+                    "src_db": "ods",
+                    "src_tbl": "demo",
+                    "src_sql": "select old",
+                    "dest_sql": "select old2",
+                    "status": "pending_confirmation",
+                    "applied_at": "",
+                }
+            }
+        }
+        fake_confirmation.update_backlog_with_decisions.return_value = (
+            [fake_confirmation.load_backlog.return_value["items"]["dwd::dwd.demo::cnt"]],
+            [],
+        )
+        fake_gap.validate_candidates.return_value = {
+            "passed": [{"candidate": {"candidate_key": "dwd::dwd.demo::cnt"}}],
+            "failed": [],
+        }
+        fake_gap.apply_candidates.return_value = 1
+
+        argv_backup = sys.argv
+        stdout_backup = sys.stdout
+        sys.argv = ["apply_confirmed_quality_rules.py", "--decision-json-base64", payload_b64, "--json"]
+        buffer = io.StringIO()
+        sys.stdout = buffer
+        try:
+            exit_code = module.main()
+        finally:
+            sys.argv = argv_backup
+            sys.stdout = stdout_backup
+
+        self.assertEqual(exit_code, 0)
+        fake_confirmation.fetch_confirmation_csv.assert_not_called()
+        fake_confirmation.parse_confirmation_rows.assert_not_called()
         payload = json.loads(buffer.getvalue())
         self.assertEqual(payload["applied_count"], 1)
 

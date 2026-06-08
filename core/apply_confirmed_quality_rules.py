@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import sys
 from pathlib import Path
@@ -24,21 +25,32 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Read Google Form/Sheet confirmations and apply approved quality rules.")
     parser.add_argument("--export-url", default=QUALITY_RULE_FORM_CONFIG.get("confirmation_export_url", ""))
     parser.add_argument("--csv-file", default="", help="Read confirmation rows from a local CSV file instead of Google export URL.")
+    parser.add_argument(
+        "--decision-json-base64",
+        default="",
+        help="Base64-encoded JSON array of confirmation rows. Preferred for n8n Google Sheets connector integration.",
+    )
     parser.add_argument("--json", action="store_true")
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
-    if not args.csv_file and not args.export_url:
+    if not args.decision_json_base64 and not args.csv_file and not args.export_url:
         print("未配置 QUALITY_RULE_CONFIRMATION_EXPORT_URL")
         return 1
 
-    if args.csv_file:
+    if args.decision_json_base64:
+        decoded = base64.b64decode(args.decision_json_base64.encode("utf-8")).decode("utf-8")
+        decision_rows = json.loads(decoded)
+        if not isinstance(decision_rows, list):
+            raise ValueError("decision-json-base64 解码后必须是 JSON 数组")
+    elif args.csv_file:
         csv_text = Path(args.csv_file).read_text(encoding="utf-8")
+        decision_rows = parse_confirmation_rows(csv_text, QUALITY_RULE_FORM_CONFIG.get("confirmation_column_map", {}))
     else:
         csv_text = fetch_confirmation_csv(args.export_url)
-    decision_rows = parse_confirmation_rows(csv_text, QUALITY_RULE_FORM_CONFIG.get("confirmation_column_map", {}))
+        decision_rows = parse_confirmation_rows(csv_text, QUALITY_RULE_FORM_CONFIG.get("confirmation_column_map", {}))
 
     backlog = load_backlog()
     approved_items, rejected_items = update_backlog_with_decisions(backlog, decision_rows)
