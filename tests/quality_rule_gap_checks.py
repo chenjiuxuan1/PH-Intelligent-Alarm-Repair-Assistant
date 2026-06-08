@@ -801,15 +801,38 @@ class QualityRuleGapScannerTests(unittest.TestCase):
         self.assertEqual(result["status"], "blocked")
         self.assertIn("check_field", result["reason"])
 
-    def test_build_exists_rule_candidate_generates_if_exists_rule(self):
+    def test_build_exists_rule_candidate_prefers_git_hint_field_for_ads(self):
         module = load_module()
-        table = {"db": "ads", "tbl": "ads_collect_user_d"}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            sql_path = Path(temp_dir) / "ads_collect_user_d.sql"
+            sql_path.write_text(
+                "select count(*) from ads.ads_collect_user_d "
+                "where create_at >= '{begin}' and create_at < '{end}'",
+                encoding="utf-8",
+            )
+            table = {"db": "ads", "tbl": "ads_collect_user_d"}
 
-        result = module.build_exists_rule_candidate("ads", table, {})
+            result = module.build_exists_rule_candidate("ads", table, {}, git_roots=[temp_dir])
 
         self.assertEqual(result["status"], "candidate")
         self.assertEqual(result["rule_name"], "if_exists")
-        self.assertIn("etl_create_time", result["candidate"]["dest_sql"])
+        self.assertIn("create_at", result["candidate"]["dest_sql"])
+        self.assertEqual(result["candidate"]["check_field"], "create_at")
+
+    def test_build_exists_rule_candidate_blocks_when_only_etl_timestamp_available(self):
+        module = load_module()
+        table = {
+            "db": "ads_sec",
+            "tbl": "ads_3602_asset_flow_d",
+            "increment_field": "etl_create_time",
+            "check_field": "",
+            "columns": json.dumps([]),
+        }
+
+        result = module.build_exists_rule_candidate("ads_sec", table, {})
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("etl_create_time", result["reason"])
 
     def test_scan_quality_rule_gaps_mirrors_database_scope(self):
         fake_cursor = FakeCursor(

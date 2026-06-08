@@ -3,6 +3,7 @@ import json
 import sys
 import tempfile
 import types
+import urllib.error
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -255,6 +256,37 @@ class QualityRuleConfirmationTests(unittest.TestCase):
         self.assertIn(backlog_item["dest_tbl"], message)
         self.assertIn("https://docs.google.com/spreadsheets/d/test/edit#gid=1", message)
         self.assertIn("确认响应表", message)
+
+    def test_submit_google_form_returns_structured_failure_on_http_error(self):
+        module, _ = load_module()
+        http_error = urllib.error.HTTPError(
+            url="https://docs.google.com/forms/d/e/test/formResponse",
+            code=400,
+            msg="Bad Request",
+            hdrs=None,
+            fp=mock.Mock(read=mock.Mock(return_value=b"bad request body")),
+        )
+
+        with mock.patch.object(module, "fetch_viewform", return_value="<html></html>"):
+            with mock.patch.object(module, "extract_hidden_fields", return_value={}):
+                with mock.patch("urllib.request.urlopen", side_effect=http_error):
+                    result = module.submit_google_form(
+                        "https://docs.google.com/forms/d/e/test/viewform",
+                        "https://docs.google.com/forms/d/e/test/formResponse",
+                        module.QUALITY_RULE_FORM_CONFIG["field_map"],
+                        {
+                            "candidate_key": "dwd::a::cnt",
+                            "country": "ph",
+                            "database": "dwd",
+                            "tbl": "a",
+                            "need_apply": "1",
+                        },
+                        required_fields=["candidate_key", "country", "database", "tbl", "need_apply"],
+                    )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], 400)
+        self.assertIn("bad request body", result["body_preview"])
 
     def test_get_pending_form_submission_items_returns_unsubmitted_pending_items(self):
         module, _ = load_module()

@@ -1404,7 +1404,47 @@ def blocked_result_with_ai_draft(table, target_table, target_db, ai_meta, defaul
     }
 
 
-def build_exists_rule_candidate(database_name, table, rule_map):
+def infer_exists_target_check_field(table, git_roots=None):
+    existing = table.get("check_field")
+    if existing:
+        lower_existing = existing.lower()
+        if not lower_existing.startswith("etl_"):
+            return existing
+        columns = parse_json_list(table.get("columns"))
+        if columns and existing in columns:
+            return existing
+
+    target_create_field = determine_create_field(table)
+    if target_create_field:
+        return target_create_field
+
+    git_hints = infer_git_rule_hints(
+        table.get("tbl") or "",
+        src_tbl=table.get("src_tbl"),
+        git_roots=git_roots,
+    )
+    git_check_field = git_hints.get("check_field")
+    if git_check_field:
+        lower_git_check_field = git_check_field.lower()
+        if not lower_git_check_field.startswith("etl_"):
+            return git_check_field
+        columns = parse_json_list(table.get("columns"))
+        if columns and git_check_field in columns:
+            return git_check_field
+
+    increment_field = table.get("increment_field")
+    if increment_field:
+        lower_increment_field = increment_field.lower()
+        if not lower_increment_field.startswith("etl_"):
+            return increment_field
+        columns = parse_json_list(table.get("columns"))
+        if columns and increment_field in columns:
+            return increment_field
+
+    return None
+
+
+def build_exists_rule_candidate(database_name, table, rule_map, git_roots=None):
     target_table = table["tbl"]
     existing_rule = rule_map.get(target_table, {}).get(EXISTS_RULE_NAME)
     if existing_rule:
@@ -1418,6 +1458,18 @@ def build_exists_rule_candidate(database_name, table, rule_map):
         }
 
     target_db = table["db"]
+    target_check_field = infer_exists_target_check_field(table, git_roots=git_roots)
+    if not target_check_field:
+        return {
+            "status": "blocked",
+            "rule_name": EXISTS_RULE_NAME,
+            "dest_tbl": target_table,
+            "dest_db": target_db,
+            "reason": "无法可靠推断 ADS/ADS_SEC 的时间判定字段，已阻止使用 etl_create_time 兜底",
+            "validation_status": "not_validated",
+            "ai_status": "not_applicable",
+        }
+
     candidate = {
         "name": EXISTS_RULE_NAME,
         "desc": "是否存在",
@@ -1428,10 +1480,10 @@ def build_exists_rule_candidate(database_name, table, rule_map):
         "src_sql": "",
         "dest_sql": (
             f"select count(*) as if_exists from {target_db}.{target_table} "
-            f"where etl_create_time >= DATE_SUB(CURRENT_DATE,INTERVAL 1 day);"
+            f"where {target_check_field} >= DATE_SUB(CURRENT_DATE,INTERVAL 1 day);"
         ),
         "msg_template": EXISTS_MSG_TEMPLATE,
-        "check_field": None,
+        "check_field": target_check_field,
     }
     return {
         "status": "candidate",
@@ -1460,7 +1512,7 @@ def scan_database_rules(cursor, database_name, monitor_level=None, git_roots=Non
                 cursor=cursor,
             )
         else:
-            result = build_exists_rule_candidate(database_name, table, rule_map)
+            result = build_exists_rule_candidate(database_name, table, rule_map, git_roots=git_roots)
         result["database"] = database_name
         results.append(result)
     return results

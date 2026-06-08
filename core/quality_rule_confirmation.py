@@ -314,9 +314,29 @@ def submit_google_form(view_url, post_url, field_map, payload, required_fields=N
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        body = resp.read().decode("utf-8", errors="replace")
-        status = resp.getcode()
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+            status = resp.getcode()
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        return {
+            "ok": False,
+            "status": exc.code,
+            "matched_success_text": False,
+            "matched_confirm_hint": False,
+            "body_preview": body[:500],
+            "error": f"HTTPError {exc.code}",
+        }
+    except urllib.error.URLError as exc:
+        return {
+            "ok": False,
+            "status": None,
+            "matched_success_text": False,
+            "matched_confirm_hint": False,
+            "body_preview": "",
+            "error": f"URLError {exc}",
+        }
     has_cn_success = "您的回复已记录" in body
     has_en_success = "Your response has been recorded" in body
     has_confirm_hint = "form_confirm" in body or "另填写一份回复" in body

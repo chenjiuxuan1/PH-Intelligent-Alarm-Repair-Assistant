@@ -141,6 +141,7 @@ def main():
                 database,
                 table,
                 rules,
+                git_roots=git_roots,
             )
         else:
             result = {
