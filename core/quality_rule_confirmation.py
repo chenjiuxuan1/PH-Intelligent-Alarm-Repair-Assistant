@@ -437,7 +437,11 @@ def update_backlog_with_decisions(backlog, decision_rows):
     for key, row in latest.items():
         if key not in items:
             continue
-        if not human_check_is_enabled(row.get("human_check", "")):
+        decision_value = (row.get("need_apply", "") or "").strip()
+        if not decision_value:
+            continue
+        human_check_value = (row.get("human_check", "") or "").strip()
+        if human_check_value and not human_check_is_enabled(human_check_value):
             continue
         item = items[key]
         item["decision"] = row.get("need_apply", "")

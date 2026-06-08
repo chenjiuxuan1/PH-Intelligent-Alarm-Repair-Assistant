@@ -145,6 +145,17 @@ class CountryConfigTests(unittest.TestCase):
         self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["notify_mentions"], ["a@example.com", "b@example.com"])
         self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["git_scan_roots"], ["/data/git", "/srv/git"])
 
+    def test_quality_rule_form_config_defaults_match_personal_confirmation_sheet_headers(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            module = load_module()
+
+        self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["confirmation_column_map"]["country"], "国家")
+        self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["confirmation_column_map"]["database"], "数据库")
+        self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["confirmation_column_map"]["tbl"], "表名")
+        self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["confirmation_column_map"]["need_apply"], "是否上线")
+        self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["confirmation_column_map"]["candidate_key"], "唯一键")
+        self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["confirmation_column_map"]["submitted_at"], "时间")
+
     def test_quality_rule_validation_uses_backend_query_token_by_default(self):
         with mock.patch.dict(os.environ, {}, clear=True):
             module = load_module()

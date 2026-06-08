@@ -476,6 +476,29 @@ class QualityRuleConfirmationTests(unittest.TestCase):
         self.assertEqual(rejected, [])
         self.assertEqual(backlog_item["status"], "approved")
 
+    def test_update_backlog_accepts_rows_without_human_check_when_need_apply_present(self):
+        module, _ = load_module()
+        backlog_item = module.candidate_to_backlog_item(self.make_candidate_result(), detected_at="2026-06-04 12:00:00")
+        backlog = {"items": {backlog_item["candidate_key"]: backlog_item}}
+        decision_rows = [
+            {
+                "submission_type": "decision",
+                "candidate_key": backlog_item["candidate_key"],
+                "country": "ph",
+                "database": "dwd",
+                "tbl": "dwd_user_member_log",
+                "need_apply": "1",
+                "human_check": "",
+                "submitted_at": "2026-06-04 18:00:00",
+            }
+        ]
+
+        approved, rejected = module.update_backlog_with_decisions(backlog, decision_rows)
+
+        self.assertEqual(len(approved), 1)
+        self.assertEqual(rejected, [])
+        self.assertEqual(backlog_item["status"], "approved")
+
     def test_update_backlog_ignores_rows_without_human_check(self):
         module, _ = load_module()
         backlog_item = module.candidate_to_backlog_item(self.make_candidate_result(), detected_at="2026-06-04 12:00:00")
@@ -489,6 +512,29 @@ class QualityRuleConfirmationTests(unittest.TestCase):
                 "tbl": "dwd_user_member_log",
                 "need_apply": "1",
                 "human_check": "0",
+                "submitted_at": "2026-06-04 18:00:00",
+            }
+        ]
+
+        approved, rejected = module.update_backlog_with_decisions(backlog, decision_rows)
+
+        self.assertEqual(approved, [])
+        self.assertEqual(rejected, [])
+        self.assertEqual(backlog_item["status"], "pending_confirmation")
+
+    def test_update_backlog_ignores_rows_without_decision_value(self):
+        module, _ = load_module()
+        backlog_item = module.candidate_to_backlog_item(self.make_candidate_result(), detected_at="2026-06-04 12:00:00")
+        backlog = {"items": {backlog_item["candidate_key"]: backlog_item}}
+        decision_rows = [
+            {
+                "submission_type": "decision",
+                "candidate_key": backlog_item["candidate_key"],
+                "country": "ph",
+                "database": "dwd",
+                "tbl": "dwd_user_member_log",
+                "need_apply": "",
+                "human_check": "",
                 "submitted_at": "2026-06-04 18:00:00",
             }
         ]
