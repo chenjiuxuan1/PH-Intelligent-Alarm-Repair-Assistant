@@ -577,6 +577,53 @@ class QualityRuleConfirmationTests(unittest.TestCase):
         self.assertEqual(rejected, [])
         self.assertEqual(backlog_item["status"], "pending_confirmation")
 
+    def test_filter_unprocessed_decision_rows_skips_processed_signature(self):
+        module, _ = load_module()
+        row = {
+            "candidate_key": "dwd::dwd.dwd_user_member_log::cnt",
+            "database": "dwd",
+            "tbl": "dwd_user_member_log",
+            "need_apply": "1",
+            "human_check": "1",
+            "src_sql": "select 1",
+            "dest_sql": "select 2",
+            "submitted_at": "2026-06-04 18:00:00",
+        }
+        signature = module.build_decision_signature(row)
+
+        rows = module.filter_unprocessed_decision_rows(
+            [row],
+            {"processed_decisions": {signature: {"candidate_key": row["candidate_key"], "action": "applied"}}},
+        )
+
+        self.assertEqual(rows, [])
+
+    def test_mark_processed_decisions_and_remove_backlog_items(self):
+        module, _ = load_module()
+        backlog_item = module.candidate_to_backlog_item(self.make_candidate_result(), detected_at="2026-06-04 12:00:00")
+        backlog_item["decision"] = "1"
+        backlog_item["decision_human_check"] = "1"
+        backlog_item["decision_submitted_at"] = "2026-06-04 18:00:00"
+        backlog_item["decision_src_sql"] = "select 1"
+        backlog_item["decision_dest_sql"] = "select 2"
+        backlog_item["decision_signature"] = module.build_decision_signature(
+            {
+                "candidate_key": backlog_item["candidate_key"],
+                "submitted_at": backlog_item["decision_submitted_at"],
+                "need_apply": backlog_item["decision"],
+                "human_check": backlog_item["decision_human_check"],
+                "src_sql": backlog_item["decision_src_sql"],
+                "dest_sql": backlog_item["decision_dest_sql"],
+            }
+        )
+        state = module.mark_processed_decisions({}, [backlog_item], action="applied")
+
+        self.assertIn(backlog_item["decision_signature"], state["processed_decisions"])
+
+        backlog = {"items": {backlog_item["candidate_key"]: backlog_item}}
+        module.remove_backlog_items(backlog, [backlog_item["candidate_key"]])
+        self.assertEqual(backlog["items"], {})
+
 
 if __name__ == "__main__":
     unittest.main()

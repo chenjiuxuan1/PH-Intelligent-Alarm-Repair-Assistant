@@ -11,11 +11,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from config.config import QUALITY_RULE_FORM_CONFIG
 from core.quality_rule_confirmation import (
+    filter_unprocessed_decision_rows,
     format_tv_apply_summary,
     fetch_confirmation_csv,
     load_backlog,
+    load_sync_state,
+    mark_processed_decisions,
     parse_confirmation_rows,
+    remove_backlog_items,
     save_backlog,
+    save_sync_state,
     update_backlog_with_decisions,
 )
 from core.quality_rule_gap_scanner import apply_candidates, disable_auto_check_for_items, validate_candidates_for_apply
@@ -57,6 +62,8 @@ def main():
         csv_text = fetch_confirmation_csv(args.export_url)
         decision_rows = parse_confirmation_rows(csv_text, QUALITY_RULE_FORM_CONFIG.get("confirmation_column_map", {}))
 
+    sync_state = load_sync_state()
+    decision_rows = filter_unprocessed_decision_rows(decision_rows, sync_state)
     backlog = load_backlog()
     approved_items, rejected_items = update_backlog_with_decisions(backlog, decision_rows)
     candidate_payload = [
@@ -116,6 +123,7 @@ def main():
                 )
 
     applied_count = apply_candidates(apply_payload)
+    successfully_applied_items = []
     if applied_count:
         from datetime import datetime
 
@@ -124,12 +132,14 @@ def main():
             if item.get("status") == "approved" and not item.get("applied_at") and item["candidate_key"] in {row["candidate_key"] for row in apply_payload}:
                 item["status"] = "applied"
                 item["applied_at"] = applied_at
+                successfully_applied_items.append(item)
 
     rejected_pending = [
         item for item in rejected_items
         if item.get("status") == "rejected" and not item.get("applied_at")
     ]
     disabled_count = disable_auto_check_for_items(rejected_pending)
+    successfully_disabled_items = []
     if disabled_count:
         from datetime import datetime
 
@@ -137,6 +147,14 @@ def main():
         for item in rejected_pending:
             item["status"] = "disabled_auto_check"
             item["applied_at"] = disabled_at
+            successfully_disabled_items.append(item)
+
+    processed_items = successfully_applied_items + successfully_disabled_items
+    if processed_items:
+        sync_state = mark_processed_decisions(sync_state, successfully_applied_items, action="applied")
+        sync_state = mark_processed_decisions(sync_state, successfully_disabled_items, action="disabled_auto_check")
+        save_sync_state(sync_state)
+        remove_backlog_items(backlog, [item["candidate_key"] for item in processed_items])
 
     save_backlog(backlog)
 

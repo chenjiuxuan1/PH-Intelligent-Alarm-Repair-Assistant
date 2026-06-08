@@ -37,9 +37,14 @@ def load_module():
     fake_confirmation = types.ModuleType("core.quality_rule_confirmation")
     fake_confirmation.format_tv_apply_summary = mock.MagicMock(return_value="summary")
     fake_confirmation.fetch_confirmation_csv = mock.MagicMock(return_value="")
+    fake_confirmation.filter_unprocessed_decision_rows = mock.MagicMock(side_effect=lambda rows, sync_state=None: rows)
     fake_confirmation.load_backlog = mock.MagicMock(return_value={"items": {}})
+    fake_confirmation.load_sync_state = mock.MagicMock(return_value={})
+    fake_confirmation.mark_processed_decisions = mock.MagicMock(side_effect=lambda state, items, action: state)
     fake_confirmation.parse_confirmation_rows = mock.MagicMock(return_value=[])
+    fake_confirmation.remove_backlog_items = mock.MagicMock(side_effect=lambda backlog, keys: backlog)
     fake_confirmation.save_backlog = mock.MagicMock()
+    fake_confirmation.save_sync_state = mock.MagicMock()
     fake_confirmation.update_backlog_with_decisions = mock.MagicMock(return_value=([], []))
 
     fake_gap = types.ModuleType("core.quality_rule_gap_scanner")
@@ -266,6 +271,9 @@ class ApplyConfirmedQualityRulesTests(unittest.TestCase):
         self.assertEqual(payload["validation_failed_count"], 0)
         fake_gap.validate_candidates_for_apply.assert_not_called()
         fake_gap.apply_candidates.assert_called_once()
+        fake_confirmation.mark_processed_decisions.assert_any_call(mock.ANY, mock.ANY, action="applied")
+        fake_confirmation.remove_backlog_items.assert_called_once()
+        fake_confirmation.save_sync_state.assert_called_once()
 
     def test_main_honors_validate_syntax_flag(self):
         module, fake_confirmation, fake_gap = load_module()
@@ -329,6 +337,45 @@ class ApplyConfirmedQualityRulesTests(unittest.TestCase):
         self.assertEqual(payload["applied_count"], 0)
         self.assertEqual(payload["validation_failed_count"], 1)
         fake_gap.validate_candidates_for_apply.assert_called_once()
+        fake_gap.apply_candidates.assert_called_once_with([])
+        fake_confirmation.save_sync_state.assert_not_called()
+
+    def test_main_filters_already_processed_decisions(self):
+        module, fake_confirmation, fake_gap = load_module()
+
+        decision_rows = [
+            {
+                "candidate_key": "dwd::dwd.demo::cnt",
+                "database": "dwd",
+                "tbl": "demo",
+                "need_apply": "1",
+                "human_check": "1",
+                "src_sql": "select 1",
+                "dest_sql": "select 2",
+                "operator": "me",
+                "notes": "",
+                "submitted_at": "2026-06-08 12:00:00",
+            }
+        ]
+        payload_b64 = base64.b64encode(json.dumps(decision_rows, ensure_ascii=False).encode("utf-8")).decode("utf-8")
+        fake_confirmation.filter_unprocessed_decision_rows.side_effect = lambda rows, sync_state=None: []
+
+        argv_backup = sys.argv
+        stdout_backup = sys.stdout
+        sys.argv = ["apply_confirmed_quality_rules.py", "--decision-json-base64", payload_b64, "--json"]
+        buffer = io.StringIO()
+        sys.stdout = buffer
+        try:
+            exit_code = module.main()
+        finally:
+            sys.argv = argv_backup
+            sys.stdout = stdout_backup
+
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(buffer.getvalue())
+        self.assertEqual(payload["approved_candidates"], 0)
+        self.assertEqual(payload["applied_count"], 0)
+        fake_confirmation.update_backlog_with_decisions.assert_called_once_with({"items": {}}, [])
         fake_gap.apply_candidates.assert_called_once_with([])
 
 

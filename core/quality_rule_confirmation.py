@@ -411,6 +411,28 @@ def parse_confirmation_rows(csv_text, column_map):
     return rows
 
 
+def build_decision_signature(row):
+    candidate_key = infer_candidate_key_from_row(row)
+    submitted_at = (row.get("submitted_at") or "").strip()
+    need_apply = (row.get("need_apply") or "").strip()
+    src_sql = (row.get("src_sql") or "").strip()
+    dest_sql = (row.get("dest_sql") or "").strip()
+    human_check = (row.get("human_check") or "").strip()
+    return "||".join([candidate_key, submitted_at, need_apply, human_check, src_sql, dest_sql])
+
+
+def filter_unprocessed_decision_rows(rows, sync_state=None):
+    sync_state = sync_state or {}
+    processed = sync_state.get("processed_decisions", {})
+    filtered = []
+    for row in rows:
+        signature = build_decision_signature(row)
+        if not signature or signature in processed:
+            continue
+        filtered.append(row)
+    return filtered
+
+
 def need_apply_is_enabled(value):
     normalized = (value or "").strip().lower()
     return normalized in {"1", "yes", "y", "true", "apply", "补充", "确认补充"}
@@ -471,12 +493,54 @@ def update_backlog_with_decisions(backlog, decision_rows):
         item["decision_src_sql"] = row.get("src_sql", "")
         item["decision_dest_sql"] = row.get("dest_sql", "")
         item["decision_human_check"] = row.get("human_check", "")
+        item["decision_signature"] = build_decision_signature(row)
         item["status"] = "approved" if need_apply_is_enabled(item["decision"]) else "rejected"
         if item["status"] == "approved":
             approved.append(item)
         else:
             rejected.append(item)
     return approved, rejected
+
+
+def mark_processed_decisions(sync_state, items, action):
+    if not items:
+        return sync_state
+    sync_state = sync_state or {}
+    processed = sync_state.setdefault("processed_decisions", {})
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for item in items:
+        signature = item.get("decision_signature", "")
+        if not signature:
+            signature = build_decision_signature(
+                {
+                    "candidate_key": item.get("candidate_key", ""),
+                    "submitted_at": item.get("decision_submitted_at", ""),
+                    "need_apply": item.get("decision", ""),
+                    "human_check": item.get("decision_human_check", ""),
+                    "src_sql": item.get("decision_src_sql") or item.get("src_sql", ""),
+                    "dest_sql": item.get("decision_dest_sql") or item.get("dest_sql", ""),
+                    "database": item.get("database", ""),
+                    "tbl": item.get("dest_tbl", ""),
+                    "dest_tbl": item.get("dest_tbl", ""),
+                }
+            )
+        if not signature:
+            continue
+        processed[signature] = {
+            "candidate_key": item.get("candidate_key", ""),
+            "action": action,
+            "processed_at": now,
+        }
+    return sync_state
+
+
+def remove_backlog_items(backlog, candidate_keys):
+    if not candidate_keys:
+        return backlog
+    items = backlog.setdefault("items", {})
+    for key in set(candidate_keys):
+        items.pop(key, None)
+    return backlog
 
 
 def format_tv_apply_summary(applied_items, disabled_items, failed_items):
