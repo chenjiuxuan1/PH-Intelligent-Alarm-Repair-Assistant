@@ -221,11 +221,11 @@ QUALITY_RULE_FORM_CONFIG = {
     "country": _get_env("QUALITY_RULE_FORM_COUNTRY", "ph"),
     "view_url": _get_env(
         "QUALITY_RULE_FORM_VIEW_URL",
-        "https://docs.google.com/forms/d/e/1FAIpQLSd-nOOjGFTgd4UMcP4_tyESsN225VgbZoEfEFs0ZWGAuo_Bww/viewform?usp=dialog",
+        "https://docs.google.com/forms/d/e/1FAIpQLScRS0T5w9B0BOmXl88uhVDeLOjfrMbpS3KWFNgG_nLK9SwV5w/viewform?usp=publish-editor",
     ),
     "post_url": _get_env(
         "QUALITY_RULE_FORM_POST_URL",
-        "https://docs.google.com/forms/d/e/1FAIpQLSd-nOOjGFTgd4UMcP4_tyESsN225VgbZoEfEFs0ZWGAuo_Bww/formResponse",
+        "https://docs.google.com/forms/d/e/1FAIpQLScRS0T5w9B0BOmXl88uhVDeLOjfrMbpS3KWFNgG_nLK9SwV5w/formResponse",
     ),
     "field_map": json.loads(
         _get_env(
@@ -253,11 +253,11 @@ QUALITY_RULE_FORM_CONFIG = {
     ),
     "confirmation_export_url": _get_env(
         "QUALITY_RULE_CONFIRMATION_EXPORT_URL",
-        "https://docs.google.com/spreadsheets/d/1xh4MSxN-sgdfKZnpGmnY-OujnneimfAp7cgVdtct6SQ/export?format=csv&gid=160372088",
+        "https://docs.google.com/spreadsheets/d/1nzjXSrMqg0_sXd2V7JpBWl2xZyNrQC25X8WK50mNP9g/export?format=csv&gid=683783947",
     ),
     "confirmation_sheet_url": _get_env(
         "QUALITY_RULE_CONFIRMATION_SHEET_URL",
-        "https://docs.google.com/spreadsheets/d/1xh4MSxN-sgdfKZnpGmnY-OujnneimfAp7cgVdtct6SQ/edit?resourcekey=&gid=160372088#gid=160372088",
+        "https://docs.google.com/spreadsheets/d/1nzjXSrMqg0_sXd2V7JpBWl2xZyNrQC25X8WK50mNP9g/edit?resourcekey=&gid=683783947#gid=683783947",
     ),
     "confirmation_column_map": json.loads(
         _get_env(
