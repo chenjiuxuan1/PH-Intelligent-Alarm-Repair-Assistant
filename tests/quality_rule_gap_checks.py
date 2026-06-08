@@ -372,6 +372,32 @@ class QualityRuleGapScannerTests(unittest.TestCase):
         self.assertEqual(result["validation_status"], "syntax_failed")
         self.assertIn("SR Gateway HTTP 403", result["validation_error"])
 
+    def test_validate_candidates_for_apply_uses_db_syntax_check_even_when_backend_is_sr_gateway(self):
+        fake_cursor = FakeCursor([])
+        fake_conn = FakeConnection(fake_cursor)
+        module = load_module(fake_get_db_connection=mock.MagicMock(return_value=fake_conn))
+        module.QUALITY_RULE_VALIDATION_CONFIG["backend"] = "sr_gateway"
+        results = [
+            {
+                "status": "candidate",
+                "candidate_key": "dwd::dwd.demo::cnt",
+                "candidate": {
+                    "src_sql": "SELECT COUNT(*) AS cnt FROM ods.demo WHERE created_at >= '{begin}' AND created_at < '{end}'",
+                    "dest_sql": "SELECT COUNT(*) AS cnt FROM dwd.demo WHERE created_at >= '{begin}' AND created_at < '{end}'",
+                    "country": "ph",
+                },
+            }
+        ]
+
+        validation = module.validate_candidates_for_apply(results)
+
+        self.assertEqual(len(validation["passed"]), 1)
+        self.assertEqual(len(validation["failed"]), 0)
+        self.assertTrue(fake_conn.closed)
+        self.assertEqual(len(fake_cursor.executed), 2)
+        self.assertTrue(fake_cursor.executed[0][0].lstrip().startswith("EXPLAIN SELECT COUNT(*)"))
+        self.assertTrue(fake_cursor.executed[1][0].lstrip().startswith("EXPLAIN SELECT COUNT(*)"))
+
     def test_finalize_candidate_with_validation_retries_ai_once_on_mismatch(self):
         fake_cursor = FakeCursor([[{"cnt": 3}], [{"cnt": 5}], [{"cnt": 3}], [{"cnt": 3}]])
         fake_conn = FakeConnection(fake_cursor)

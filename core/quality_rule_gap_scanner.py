@@ -709,12 +709,14 @@ def build_syntax_probe_statement(statement):
     return statement
 
 
-def validate_sql_syntax_with_validation_backend(cursor, sql_text, begin, end, candidate=None):
+def validate_sql_syntax_with_validation_backend(cursor, sql_text, begin, end, candidate=None, force_db=False):
     statements = split_sql_statements(sql_text, begin, end)
     if not statements:
         raise ValueError("缺少待执行 SQL")
 
-    if validation_backend() == "db":
+    if force_db or validation_backend() == "db":
+        if cursor is None:
+            raise ValueError("缺少数据库游标，无法执行直连语法校验")
         for statement in statements:
             cursor.execute(build_syntax_probe_statement(statement))
         return statements
@@ -736,14 +738,14 @@ def validate_sql_syntax_with_validation_backend(cursor, sql_text, begin, end, ca
     return statements
 
 
-def validate_candidate_sql_syntax(cursor, candidate):
+def validate_candidate_sql_syntax(cursor, candidate, force_db=False):
     begin, end = build_validation_window()
     try:
         src_statements = validate_sql_syntax_with_validation_backend(
-            cursor, candidate.get("src_sql", ""), begin, end, candidate=candidate
+            cursor, candidate.get("src_sql", ""), begin, end, candidate=candidate, force_db=force_db
         )
         dest_statements = validate_sql_syntax_with_validation_backend(
-            cursor, candidate.get("dest_sql", ""), begin, end, candidate=candidate
+            cursor, candidate.get("dest_sql", ""), begin, end, candidate=candidate, force_db=force_db
         )
     except Exception as exc:
         return {
@@ -1608,35 +1610,25 @@ def validate_candidates_for_apply(results):
     if not candidate_items:
         return {"passed": [], "failed": []}
 
-    if validation_backend() == "db":
-        conn = get_db_connection()
-        try:
-            with conn.cursor() as cursor:
-                passed = []
-                failed = []
-                for item in candidate_items:
-                    candidate = item["candidate"]
-                    result = validate_candidate_sql_syntax(cursor, candidate)
-                    wrapped = {**item, "candidate": candidate, **result}
-                    if result["ok"]:
-                        passed.append(wrapped)
-                    else:
-                        failed.append(wrapped)
-                return {"passed": passed, "failed": failed}
-        finally:
-            conn.close()
-
-    passed = []
-    failed = []
-    for item in candidate_items:
-        candidate = item["candidate"]
-        result = validate_candidate_sql_syntax(None, candidate)
-        wrapped = {**item, "candidate": candidate, **result}
-        if result["ok"]:
-            passed.append(wrapped)
-        else:
-            failed.append(wrapped)
-    return {"passed": passed, "failed": failed}
+    # Human-confirmed apply should only check SQL syntax/executability via a
+    # direct DB connection. It must not depend on the SR Gateway path, which
+    # can be unavailable even when the target metadata DB is writable.
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            passed = []
+            failed = []
+            for item in candidate_items:
+                candidate = item["candidate"]
+                result = validate_candidate_sql_syntax(cursor, candidate, force_db=True)
+                wrapped = {**item, "candidate": candidate, **result}
+                if result["ok"]:
+                    passed.append(wrapped)
+                else:
+                    failed.append(wrapped)
+            return {"passed": passed, "failed": failed}
+    finally:
+        conn.close()
 
 
 def disable_auto_check_for_items(items):
