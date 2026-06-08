@@ -155,6 +155,14 @@ class CountryConfigTests(unittest.TestCase):
         self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["confirmation_column_map"]["need_apply"], "是否上线")
         self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["confirmation_column_map"]["candidate_key"], "唯一键")
         self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["confirmation_column_map"]["submitted_at"], "时间")
+        self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["field_map"]["country"], "entry.531558451")
+        self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["field_map"]["database"], "entry.1835227505")
+        self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["field_map"]["tbl"], "entry.1870533704")
+        self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["field_map"]["need_apply"], "entry.52956991")
+        self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["field_map"]["candidate_key"], "entry.1641182397")
+        self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["field_map"]["src_sql"], "entry.625807972")
+        self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["field_map"]["dest_sql"], "entry.817070984")
+        self.assertEqual(module.QUALITY_RULE_FORM_CONFIG["field_map"]["human_check"], "entry.943241897")
 
     def test_quality_rule_validation_uses_backend_query_token_by_default(self):
         with mock.patch.dict(os.environ, {}, clear=True):
