@@ -819,7 +819,7 @@ class QualityRuleGapScannerTests(unittest.TestCase):
         self.assertIn("create_at", result["candidate"]["dest_sql"])
         self.assertEqual(result["candidate"]["check_field"], "create_at")
 
-    def test_build_exists_rule_candidate_blocks_when_only_etl_timestamp_available(self):
+    def test_build_exists_rule_candidate_falls_back_to_ai_when_only_etl_timestamp_available(self):
         module = load_module()
         table = {
             "db": "ads_sec",
@@ -828,11 +828,49 @@ class QualityRuleGapScannerTests(unittest.TestCase):
             "check_field": "",
             "columns": json.dumps([]),
         }
+        ai_candidate = {
+            "name": "cnt",
+            "src_db": "dwd",
+            "src_tbl": "dwd_asset_flow_src",
+            "dest_db": "ads_sec",
+            "dest_tbl": "ads_3602_asset_flow_d",
+            "src_sql": "SELECT COUNT(*) AS cnt FROM dwd.dwd_asset_flow_src WHERE updated_at >= '{begin}' AND updated_at < '{end}'",
+            "dest_sql": "SELECT COUNT(*) AS cnt FROM ads_sec.ads_3602_asset_flow_d WHERE updated_at >= '{begin}' AND updated_at < '{end}'",
+            "src_check_field": "updated_at",
+            "dest_check_field": "updated_at",
+            "ai_reason": "使用业务更新时间替代 etl_create_time",
+        }
+        ai_meta = {"status": "ok", "reason": "", "git_matches": []}
 
-        result = module.build_exists_rule_candidate("ads_sec", table, {})
+        with mock.patch.object(module, "call_ai_candidate", return_value=(ai_candidate, ai_meta)) as mocked_ai:
+            with mock.patch.object(
+                module,
+                "finalize_candidate_with_validation",
+                return_value={"status": "candidate", "candidate": ai_candidate},
+            ) as mocked_finalize:
+                result = module.build_exists_rule_candidate("ads_sec", table, {}, cursor=mock.MagicMock())
+
+        self.assertEqual(result["status"], "candidate")
+        self.assertIn("已阻止使用 etl_create_time 兜底", mocked_ai.call_args.args[2])
+        mocked_finalize.assert_called_once()
+
+    def test_build_exists_rule_candidate_returns_blocked_when_ai_also_fails(self):
+        module = load_module()
+        table = {
+            "db": "ads_sec",
+            "tbl": "ads_3602_asset_flow_d",
+            "increment_field": "etl_create_time",
+            "check_field": "",
+            "columns": json.dumps([]),
+        }
+        ai_meta = {"status": "failed", "reason": "no usable sql", "git_matches": []}
+
+        with mock.patch.object(module, "call_ai_candidate", return_value=(None, ai_meta)):
+            result = module.build_exists_rule_candidate("ads_sec", table, {}, cursor=mock.MagicMock())
 
         self.assertEqual(result["status"], "blocked")
-        self.assertIn("etl_create_time", result["reason"])
+        self.assertEqual(result["rule_name"], "if_exists")
+        self.assertIn("AI 未能补出可用 SQL", result["reason"])
 
     def test_build_count_rule_candidate_uses_requested_metric_field_override(self):
         module = load_module()

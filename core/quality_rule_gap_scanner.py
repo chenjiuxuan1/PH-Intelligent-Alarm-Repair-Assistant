@@ -1466,12 +1466,12 @@ def finalize_candidate_with_validation(database_name, target_table, target_db, c
     return blocked
 
 
-def blocked_result_with_ai_draft(table, target_table, target_db, ai_meta, default_reason, fallback=None):
+def blocked_result_with_ai_draft(table, target_table, target_db, ai_meta, default_reason, fallback=None, rule_name=COUNT_RULE_NAME):
     draft = ai_meta.get("draft_candidate") or {}
     fallback = fallback or {}
     return {
         "status": "blocked",
-        "rule_name": COUNT_RULE_NAME,
+        "rule_name": rule_name,
         "dest_tbl": target_table,
         "dest_db": target_db,
         "src_db": draft.get("src_db") or fallback.get("src_db", "") or table.get("src_db", ""),
@@ -1558,15 +1558,41 @@ def build_exists_rule_candidate(database_name, table, rule_map, git_roots=None, 
     target_db = table["db"]
     target_check_field = infer_exists_target_check_field(table, git_roots=git_roots)
     if not target_check_field:
-        return {
-            "status": "blocked",
-            "rule_name": EXISTS_RULE_NAME,
-            "dest_tbl": target_table,
-            "dest_db": target_db,
-            "reason": "无法可靠推断 ADS/ADS_SEC 的时间判定字段，已阻止使用 etl_create_time 兜底",
-            "validation_status": "not_validated",
-            "ai_status": "not_applicable",
-        }
+        ai_table = enrich_ai_schema_context(
+            {
+                **table,
+                "dest_tbl": target_table,
+                "dest_db": target_db,
+            },
+            cursor=cursor,
+        )
+        ai_reason = "无法可靠推断 ADS/ADS_SEC 的时间判定字段，已阻止使用 etl_create_time 兜底，请改走 AI 生成更合理的校验 SQL"
+        ai_candidate, ai_meta = call_ai_candidate(
+            database_name,
+            ai_table,
+            ai_reason,
+            git_roots=git_roots,
+        )
+        if ai_candidate:
+            return finalize_candidate_with_validation(
+                database_name,
+                target_table,
+                target_db,
+                ai_candidate,
+                ai_table,
+                git_roots=git_roots,
+                cursor=cursor,
+                base_reason="快捷 if_exists 规则无法安全生成，已切换为 AI 生成",
+                ai_status=ai_meta.get("status", ""),
+            )
+        return blocked_result_with_ai_draft(
+            ai_table,
+            target_table,
+            target_db,
+            ai_meta,
+            "快捷 if_exists 规则无法安全生成，且 AI 未能补出可用 SQL",
+            rule_name=EXISTS_RULE_NAME,
+        )
 
     candidate = {
         "name": EXISTS_RULE_NAME,

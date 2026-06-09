@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from alert.db_config import get_db_connection
 from config.config import QUALITY_RULE_FORM_CONFIG
 from core.quality_rule_confirmation import (
+    backlog_item_has_submittable_sql,
     build_candidate_key,
     compute_form_payload_signature,
     fetch_confirmation_csv,
@@ -202,8 +203,8 @@ def main():
 
     target_item["form_submitted_at"] = None
     target_item["last_form_payload_signature"] = ""
-    form_items = [target_item]
-    form_result = submit_backlog_items_to_form(form_items, dry_run=False)
+    form_items = [target_item] if backlog_item_has_submittable_sql(target_item) else []
+    form_result = submit_backlog_items_to_form(form_items, dry_run=False) if form_items else empty_form_result()
     success_keys = {
         row["candidate_key"]
         for row in form_result.get("results", [])

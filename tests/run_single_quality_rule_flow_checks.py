@@ -98,6 +98,7 @@ class RunSingleQualityRuleFlowTests(unittest.TestCase):
             }
         )
         module.load_backlog = mock.MagicMock(return_value={"items": {}})
+        module.backlog_item_has_submittable_sql = mock.MagicMock(return_value=True)
         module.merge_candidates_into_backlog = mock.MagicMock(
             return_value=(
                 {
@@ -143,6 +144,77 @@ class RunSingleQualityRuleFlowTests(unittest.TestCase):
         self.assertEqual(payload["tv_result"]["reason"], "deferred_batch_notification")
         self.assertEqual(payload["new_candidate_keys"], ["dwd::dwd.dwd_demo::cnt"])
 
+    def test_main_does_not_submit_form_for_blocked_item_without_sql(self):
+        module = load_module()
+
+        fake_conn = mock.MagicMock()
+        fake_cursor = mock.MagicMock()
+        fake_conn.cursor.return_value = fake_cursor
+        fake_cursor.fetchone.return_value = {"tbl": "ads_demo"}
+
+        module.get_db_connection = mock.MagicMock(return_value=fake_conn)
+        module.load_single_table = mock.MagicMock(return_value=({"tbl": "ads_demo", "db": "ads_sec"}, "wattrel_etl_table_settings"))
+        module.load_quality_rules = mock.MagicMock(return_value=[])
+        module.build_exists_rule_candidate = mock.MagicMock(
+            return_value={
+                "status": "blocked",
+                "rule_name": "if_exists",
+                "dest_tbl": "ads_demo",
+                "dest_db": "ads_sec",
+                "src_db": "",
+                "src_tbl": "",
+                "src_sql": "",
+                "dest_sql": "",
+                "reason": "无法可靠推断 ADS/ADS_SEC 的时间判定字段，已阻止使用 etl_create_time 兜底",
+            }
+        )
+        module.load_backlog = mock.MagicMock(return_value={"items": {}})
+        module.merge_candidates_into_backlog = mock.MagicMock(
+            return_value=(
+                {
+                    "items": {
+                        "ads_sec::ads_sec.ads_demo::if_exists": {
+                            "candidate_key": "ads_sec::ads_sec.ads_demo::if_exists",
+                            "status": "pending_confirmation",
+                            "dest_tbl": "ads_demo",
+                            "src_sql": "",
+                            "dest_sql": "",
+                            "rule_name": "if_exists",
+                        }
+                    }
+                },
+                [{"candidate_key": "ads_sec::ads_sec.ads_demo::if_exists"}],
+            )
+        )
+        module.build_candidate_key = mock.MagicMock(return_value="ads_sec::ads_sec.ads_demo::if_exists")
+        module.fetch_confirmation_csv = mock.MagicMock(return_value="database,tbl,metric_field\n")
+        module.parse_confirmation_rows = mock.MagicMock(return_value=[])
+        module.find_latest_requested_metric_field = mock.MagicMock(return_value="")
+        module.backlog_item_has_submittable_sql = mock.MagicMock(return_value=False)
+        module.submit_backlog_items_to_form = mock.MagicMock()
+        module.compute_form_payload_signature = mock.MagicMock(return_value="sig")
+        module.save_backlog = mock.MagicMock()
+        module.load_langfuse_batch = mock.MagicMock(return_value={"batch": []})
+
+        argv_backup = sys.argv
+        stdout_backup = sys.stdout
+        sys.argv = ["run_single_quality_rule_flow.py", "--database", "ads_sec", "--tbl", "ads_demo"]
+        buffer = io.StringIO()
+        sys.stdout = buffer
+        try:
+            exit_code = module.main()
+        finally:
+            sys.argv = argv_backup
+            sys.stdout = stdout_backup
+
+        self.assertEqual(exit_code, 0)
+        output = buffer.getvalue()
+        payload_text = output.split("===FULL_CHAIN_RESULT===")[1].split("===LANGFUSE_BATCH===")[0].strip()
+        payload = json.loads(payload_text)
+        self.assertEqual(payload["form_submission_items"], 0)
+        self.assertTrue(payload["form_result"]["skipped"])
+        module.submit_backlog_items_to_form.assert_not_called()
+
     def test_main_passes_requested_metric_field_to_generation(self):
         module = load_module()
 
@@ -156,6 +228,7 @@ class RunSingleQualityRuleFlowTests(unittest.TestCase):
         module.fetch_confirmation_csv = mock.MagicMock(return_value="database,tbl,metric_field\n")
         module.parse_confirmation_rows = mock.MagicMock(return_value=[{"database": "dwd", "tbl": "dwd_demo", "metric_field": "total_cost", "submitted_at": "2026-06-08 10:00:00"}])
         module.find_latest_requested_metric_field = mock.MagicMock(return_value="total_cost")
+        module.backlog_item_has_submittable_sql = mock.MagicMock(return_value=True)
         module.build_count_rule_candidate = mock.MagicMock(
             return_value={
                 "status": "existing",
