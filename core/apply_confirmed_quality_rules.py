@@ -41,12 +41,18 @@ def parse_args():
         action="store_true",
         help="Validate approved SQL before apply. Disabled by default for human-confirmed apply flows.",
     )
+    parser.add_argument(
+        "--country",
+        default=QUALITY_RULE_FORM_CONFIG.get("country", "ph"),
+        help="Only process confirmation rows for this country.",
+    )
     parser.add_argument("--json", action="store_true")
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+    target_country = (args.country or QUALITY_RULE_FORM_CONFIG.get("country", "ph")).strip().lower()
     if not args.decision_json_base64 and not args.csv_file and not args.export_url:
         print("未配置 QUALITY_RULE_CONFIRMATION_EXPORT_URL")
         return 1
@@ -65,6 +71,10 @@ def main():
 
     sync_state = load_sync_state()
     decision_rows = filter_unprocessed_decision_rows(decision_rows, sync_state)
+    decision_rows = [
+        row for row in decision_rows
+        if str(row.get("country") or QUALITY_RULE_FORM_CONFIG.get("country", "ph")).strip().lower() == target_country
+    ]
     backlog = load_backlog()
     approved_items, rejected_items = update_backlog_with_decisions(backlog, decision_rows)
     candidate_payload = [
