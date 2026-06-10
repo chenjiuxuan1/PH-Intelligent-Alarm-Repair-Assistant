@@ -17,6 +17,7 @@ from core.quality_rule_confirmation import (
     build_candidate_key,
     compute_form_payload_signature,
     fetch_confirmation_csv,
+    find_latest_confirmation_row,
     find_latest_requested_metric_field,
     load_backlog,
     merge_candidates_into_backlog,
@@ -89,6 +90,17 @@ def build_non_backlog_payload(database, table, result):
     }
 
 
+def load_confirmation_rows():
+    export_url = (QUALITY_RULE_FORM_CONFIG.get("confirmation_export_url") or "").strip()
+    if not export_url:
+        return []
+    try:
+        csv_text = fetch_confirmation_csv(export_url)
+        return parse_confirmation_rows(csv_text, QUALITY_RULE_FORM_CONFIG.get("confirmation_column_map", {}))
+    except Exception:
+        return []
+
+
 def load_single_table(cursor, database, table_name):
     if database in {"ods", "ods_security"}:
         cursor.execute(
@@ -104,16 +116,8 @@ def load_single_table(cursor, database, table_name):
     return cursor.fetchone(), "wattrel_etl_table_settings"
 
 
-def load_requested_metric_field(database, table_name):
-    export_url = (QUALITY_RULE_FORM_CONFIG.get("confirmation_export_url") or "").strip()
-    if not export_url:
-        return ""
-    try:
-        csv_text = fetch_confirmation_csv(export_url)
-        rows = parse_confirmation_rows(csv_text, QUALITY_RULE_FORM_CONFIG.get("confirmation_column_map", {}))
-        return find_latest_requested_metric_field(rows, database, table_name)
-    except Exception:
-        return ""
+def load_requested_metric_field(rows, database, table_name):
+    return find_latest_requested_metric_field(rows, database, table_name)
 
 
 def main():
@@ -122,7 +126,33 @@ def main():
     table_name = args.tbl
     detected_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     git_roots = args.git_roots or ["/data/git/starrocks/workflow/ph"]
-    requested_metric_field = load_requested_metric_field(database, table_name)
+    confirmation_rows = load_confirmation_rows()
+    target_country = str(QUALITY_RULE_FORM_CONFIG.get("country", "ph")).strip().lower()
+    existing_confirmation_row = find_latest_confirmation_row(
+        confirmation_rows,
+        database,
+        table_name,
+        country=target_country,
+    )
+    requested_metric_field = load_requested_metric_field(confirmation_rows, database, table_name)
+
+    if existing_confirmation_row:
+        result = {
+            "country": QUALITY_RULE_FORM_CONFIG.get("country", "ph"),
+            "database": database,
+            "status": "skipped",
+            "rule_name": "",
+            "dest_tbl": table_name,
+            "dest_db": database,
+            "reason": "Google 确认表中已存在该表记录，跳过重复生成",
+            "existing_confirmation_row": existing_confirmation_row,
+            "validation_status": "not_validated",
+            "ai_status": "not_applicable",
+        }
+        if requested_metric_field:
+            result["requested_metric_field"] = requested_metric_field
+        emit(build_non_backlog_payload(database, table_name, result), load_langfuse_batch())
+        return 0
 
     conn = get_db_connection()
     try:

@@ -259,6 +259,22 @@ QUALITY_RULE_FORM_CONFIG = {
         "QUALITY_RULE_CONFIRMATION_SHEET_URL",
         "https://docs.google.com/spreadsheets/d/1nzjXSrMqg0_sXd2V7JpBWl2xZyNrQC25X8WK50mNP9g/edit?resourcekey=&gid=683783947#gid=683783947",
     ),
+    "confirmation_spreadsheet_id": _get_env(
+        "QUALITY_RULE_CONFIRMATION_SPREADSHEET_ID",
+        "1nzjXSrMqg0_sXd2V7JpBWl2xZyNrQC25X8WK50mNP9g",
+    ),
+    "confirmation_sheet_gid": _get_env(
+        "QUALITY_RULE_CONFIRMATION_SHEET_GID",
+        "683783947",
+    ),
+    "confirmation_google_service_account_json": _get_env(
+        "QUALITY_RULE_CONFIRMATION_GOOGLE_SERVICE_ACCOUNT_JSON",
+        "",
+    ),
+    "confirmation_google_service_account_file": _get_env(
+        "QUALITY_RULE_CONFIRMATION_GOOGLE_SERVICE_ACCOUNT_FILE",
+        "",
+    ),
     "confirmation_column_map": json.loads(
         _get_env(
             "QUALITY_RULE_CONFIRMATION_COLUMN_MAP_JSON",

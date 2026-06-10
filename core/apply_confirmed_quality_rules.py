@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from config.config import QUALITY_RULE_FORM_CONFIG
 from core.quality_rule_confirmation import (
+    delete_confirmation_sheet_rows,
     extract_sheet_row_number,
     filter_unprocessed_decision_rows,
     format_tv_apply_summary,
@@ -171,16 +172,6 @@ def main():
 
     applied_items = [item for item in approved_items if item.get("status") == "applied"]
     disabled_items = [item for item in rejected_pending if item.get("status") == "disabled_auto_check"]
-    tv_result = {"success": True, "skipped": True}
-    summary_message = format_tv_apply_summary(applied_items, disabled_items, validation_failed)
-    if applied_items or disabled_items or validation_failed:
-        from core.send_tv_report import send_tv_report
-        tv_result = send_tv_report(
-            summary_message,
-            mentions=QUALITY_RULE_FORM_CONFIG.get("notify_mentions", []),
-            bot_id=QUALITY_RULE_FORM_CONFIG.get("notify_bot_id"),
-        )
-
     applied_sheet_rows = sorted(
         {
             row_number
@@ -198,6 +189,22 @@ def main():
         reverse=True,
     )
     processed_sheet_rows = sorted(set(applied_sheet_rows + disabled_sheet_rows), reverse=True)
+    sheet_delete_result = delete_confirmation_sheet_rows(processed_sheet_rows)
+    tv_result = {"success": True, "skipped": True}
+    summary_message = format_tv_apply_summary(
+        applied_items,
+        disabled_items,
+        validation_failed,
+        processed_sheet_rows=processed_sheet_rows,
+        sheet_delete_result=sheet_delete_result,
+    )
+    if applied_items or disabled_items or validation_failed:
+        from core.send_tv_report import send_tv_report
+        tv_result = send_tv_report(
+            summary_message,
+            mentions=QUALITY_RULE_FORM_CONFIG.get("notify_mentions", []),
+            bot_id=QUALITY_RULE_FORM_CONFIG.get("notify_bot_id"),
+        )
 
     payload = {
         "approved_candidates": len(approved_items),
@@ -208,6 +215,7 @@ def main():
         "applied_sheet_rows": applied_sheet_rows,
         "disabled_sheet_rows": disabled_sheet_rows,
         "processed_sheet_rows": processed_sheet_rows,
+        "sheet_delete_result": sheet_delete_result,
         "processed_sheet_actions": [
             {
                 "candidate_key": item.get("candidate_key", ""),

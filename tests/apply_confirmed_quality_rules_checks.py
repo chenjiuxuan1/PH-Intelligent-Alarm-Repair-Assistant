@@ -48,6 +48,9 @@ def load_module():
     fake_confirmation.load_sync_state = mock.MagicMock(return_value={})
     fake_confirmation.mark_processed_decisions = mock.MagicMock(side_effect=lambda state, items, action: state)
     fake_confirmation.parse_confirmation_rows = mock.MagicMock(return_value=[])
+    fake_confirmation.delete_confirmation_sheet_rows = mock.MagicMock(
+        return_value={"success": True, "deleted_rows": [], "skipped": True, "reason": "no_rows"}
+    )
     fake_confirmation.remove_backlog_items = mock.MagicMock(side_effect=lambda backlog, keys: backlog)
     fake_confirmation.save_backlog = mock.MagicMock()
     fake_confirmation.save_sync_state = mock.MagicMock()
@@ -156,6 +159,8 @@ class ApplyConfirmedQualityRulesTests(unittest.TestCase):
         payload = json.loads(buffer.getvalue())
         self.assertEqual(payload["applied_count"], 1)
         self.assertEqual(payload["processed_sheet_rows"], [2])
+        self.assertEqual(payload["sheet_delete_result"]["deleted_rows"], [])
+        fake_confirmation.delete_confirmation_sheet_rows.assert_called_once_with([2])
         fake_gap.validate_candidates_for_apply.assert_not_called()
 
     def test_main_reads_confirmation_rows_from_base64_json(self):
@@ -219,6 +224,7 @@ class ApplyConfirmedQualityRulesTests(unittest.TestCase):
         payload = json.loads(buffer.getvalue())
         self.assertEqual(payload["applied_count"], 1)
         self.assertEqual(payload["applied_sheet_rows"], [8])
+        fake_confirmation.delete_confirmation_sheet_rows.assert_called_once_with([8])
         fake_gap.validate_candidates_for_apply.assert_not_called()
 
     def test_main_does_not_validate_by_default(self):
@@ -280,6 +286,7 @@ class ApplyConfirmedQualityRulesTests(unittest.TestCase):
         self.assertEqual(payload["applied_count"], 1)
         self.assertEqual(payload["validation_failed_count"], 0)
         self.assertEqual(payload["processed_sheet_rows"], [])
+        fake_confirmation.delete_confirmation_sheet_rows.assert_called_once_with([])
         fake_gap.validate_candidates_for_apply.assert_not_called()
         fake_gap.apply_candidates.assert_called_once()
         fake_confirmation.mark_processed_decisions.assert_any_call(mock.ANY, mock.ANY, action="applied")
@@ -348,6 +355,7 @@ class ApplyConfirmedQualityRulesTests(unittest.TestCase):
         self.assertEqual(payload["applied_count"], 0)
         self.assertEqual(payload["validation_failed_count"], 1)
         self.assertEqual(payload["processed_sheet_rows"], [])
+        fake_confirmation.delete_confirmation_sheet_rows.assert_called_once_with([])
         fake_gap.validate_candidates_for_apply.assert_called_once()
         fake_gap.apply_candidates.assert_called_once_with([])
         fake_confirmation.save_sync_state.assert_not_called()
@@ -388,6 +396,7 @@ class ApplyConfirmedQualityRulesTests(unittest.TestCase):
         self.assertEqual(payload["approved_candidates"], 0)
         self.assertEqual(payload["applied_count"], 0)
         self.assertEqual(payload["processed_sheet_rows"], [])
+        fake_confirmation.delete_confirmation_sheet_rows.assert_called_once_with([])
         fake_confirmation.update_backlog_with_decisions.assert_called_once_with({"items": {}}, [])
         fake_gap.apply_candidates.assert_called_once_with([])
 

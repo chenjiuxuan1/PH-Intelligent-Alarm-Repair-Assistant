@@ -8,6 +8,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from config.config import QUALITY_RULE_FORM_CONFIG
+from core.quality_rule_confirmation import (
+    fetch_confirmation_csv,
+    find_latest_confirmation_row,
+    parse_confirmation_rows,
+)
 from core.quality_rule_gap_scanner import list_pending_generation_tables, scan_quality_rule_gaps
 
 
@@ -37,6 +43,38 @@ def parse_args():
     )
     parser.add_argument("--json", action="store_true", help="Pretty-print JSON")
     return parser.parse_args()
+
+
+def load_confirmation_rows():
+    export_url = (QUALITY_RULE_FORM_CONFIG.get("confirmation_export_url") or "").strip()
+    if not export_url:
+        return []
+    try:
+        csv_text = fetch_confirmation_csv(export_url)
+        return parse_confirmation_rows(
+            csv_text,
+            QUALITY_RULE_FORM_CONFIG.get("confirmation_column_map", {}),
+        )
+    except Exception:
+        return []
+
+
+def filter_existing_confirmation_rows(items, confirmation_rows):
+    if not items or not confirmation_rows:
+        return items
+
+    target_country = str(QUALITY_RULE_FORM_CONFIG.get("country", "ph")).strip().lower()
+    filtered = []
+    for item in items:
+        if find_latest_confirmation_row(
+            confirmation_rows,
+            item.get("database", ""),
+            item.get("tbl", ""),
+            country=target_country,
+        ):
+            continue
+        filtered.append(item)
+    return filtered
 
 
 def main():
@@ -78,6 +116,8 @@ def main():
                     "validation_status": item.get("validation_status", ""),
                 }
             )
+
+    items = filter_existing_confirmation_rows(items, load_confirmation_rows())
 
     if args.json:
         print(json.dumps(items, ensure_ascii=False, indent=2))

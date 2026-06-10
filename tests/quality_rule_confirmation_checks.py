@@ -507,6 +507,37 @@ class QualityRuleConfirmationTests(unittest.TestCase):
 
         self.assertEqual(result, "total_cost")
 
+    def test_find_latest_confirmation_row_filters_by_country_and_latest_submit_time(self):
+        module, _ = load_module()
+        rows = [
+            {
+                "country": "ph",
+                "database": "dwd",
+                "tbl": "dwd_user_member_log",
+                "submitted_at": "2026-06-08 10:00:00",
+                "need_apply": "1",
+            },
+            {
+                "country": "th",
+                "database": "dwd",
+                "tbl": "dwd_user_member_log",
+                "submitted_at": "2026-06-08 11:00:00",
+                "need_apply": "0",
+            },
+            {
+                "country": "ph",
+                "database": "dwd",
+                "tbl": "dwd_user_member_log",
+                "submitted_at": "2026-06-08 12:00:00",
+                "need_apply": "0",
+            },
+        ]
+
+        result = module.find_latest_confirmation_row(rows, "dwd", "dwd_user_member_log", country="ph")
+
+        self.assertEqual(result["submitted_at"], "2026-06-08 12:00:00")
+        self.assertEqual(result["country"], "ph")
+
     def test_build_form_payload_requires_candidate_key(self):
         module, _ = load_module()
 

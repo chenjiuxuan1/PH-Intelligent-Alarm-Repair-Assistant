@@ -9,6 +9,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 from pathlib import Path
+from typing import Iterable
 
 from config.config import QUALITY_RULE_FORM_CONFIG, WORKSPACE_CONFIG
 from core.quality_rule_gap_scanner import resolve_rule_name
@@ -410,6 +411,154 @@ def fetch_confirmation_csv(export_url):
         return resp.read().decode("utf-8", errors="replace")
 
 
+def _extract_spreadsheet_id_from_url(url):
+    if not url:
+        return ""
+    match = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", url)
+    return match.group(1) if match else ""
+
+
+def _extract_sheet_gid_from_url(url):
+    if not url:
+        return ""
+    match = re.search(r"[?&#]gid=(\d+)", url)
+    return match.group(1) if match else ""
+
+
+def delete_confirmation_sheet_rows(row_numbers: Iterable[int], form_config=None, dry_run=False):
+    form_config = form_config or QUALITY_RULE_FORM_CONFIG
+    normalized_rows = sorted(
+        {
+            int(str(row_number).strip())
+            for row_number in (row_numbers or [])
+            if row_number not in (None, "")
+            and str(row_number).strip().isdigit()
+            and int(str(row_number).strip()) >= 2
+        },
+        reverse=True,
+    )
+    if not normalized_rows:
+        return {
+            "success": True,
+            "skipped": True,
+            "reason": "no_rows",
+            "deleted_rows": [],
+        }
+
+    spreadsheet_id = (
+        (form_config.get("confirmation_spreadsheet_id") or "").strip()
+        or _extract_spreadsheet_id_from_url(form_config.get("confirmation_sheet_url", ""))
+        or _extract_spreadsheet_id_from_url(form_config.get("confirmation_export_url", ""))
+    )
+    sheet_gid_text = (
+        (form_config.get("confirmation_sheet_gid") or "").strip()
+        or _extract_sheet_gid_from_url(form_config.get("confirmation_sheet_url", ""))
+        or _extract_sheet_gid_from_url(form_config.get("confirmation_export_url", ""))
+    )
+    credentials_json = (form_config.get("confirmation_google_service_account_json") or "").strip()
+    credentials_file = (form_config.get("confirmation_google_service_account_file") or "").strip()
+
+    if not spreadsheet_id or not sheet_gid_text:
+        return {
+            "success": False,
+            "skipped": True,
+            "reason": "sheet_config_incomplete",
+            "deleted_rows": [],
+            "spreadsheet_id": spreadsheet_id,
+            "sheet_gid": sheet_gid_text,
+        }
+    if not credentials_json and not credentials_file:
+        return {
+            "success": False,
+            "skipped": True,
+            "reason": "google_credentials_missing",
+            "deleted_rows": [],
+            "spreadsheet_id": spreadsheet_id,
+            "sheet_gid": sheet_gid_text,
+        }
+
+    try:
+        sheet_gid = int(sheet_gid_text)
+    except (TypeError, ValueError):
+        return {
+            "success": False,
+            "skipped": True,
+            "reason": "invalid_sheet_gid",
+            "deleted_rows": [],
+            "spreadsheet_id": spreadsheet_id,
+            "sheet_gid": sheet_gid_text,
+        }
+
+    if dry_run:
+        return {
+            "success": True,
+            "skipped": False,
+            "dry_run": True,
+            "deleted_rows": normalized_rows,
+            "spreadsheet_id": spreadsheet_id,
+            "sheet_gid": sheet_gid,
+        }
+
+    try:
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+    except Exception as exc:
+        return {
+            "success": False,
+            "skipped": True,
+            "reason": "google_client_library_missing",
+            "error": str(exc),
+            "deleted_rows": [],
+            "spreadsheet_id": spreadsheet_id,
+            "sheet_gid": sheet_gid,
+        }
+
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    try:
+        if credentials_json:
+            credentials_info = json.loads(credentials_json)
+            credentials = service_account.Credentials.from_service_account_info(credentials_info, scopes=scopes)
+        else:
+            credentials = service_account.Credentials.from_service_account_file(credentials_file, scopes=scopes)
+
+        service = build("sheets", "v4", credentials=credentials, cache_discovery=False)
+        requests = [
+            {
+                "deleteDimension": {
+                    "range": {
+                        "sheetId": sheet_gid,
+                        "dimension": "ROWS",
+                        "startIndex": row_number - 1,
+                        "endIndex": row_number,
+                    }
+                }
+            }
+            for row_number in normalized_rows
+        ]
+        response = (
+            service.spreadsheets()
+            .batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
+            .execute()
+        )
+        return {
+            "success": True,
+            "skipped": False,
+            "deleted_rows": normalized_rows,
+            "spreadsheet_id": spreadsheet_id,
+            "sheet_gid": sheet_gid,
+            "response": response,
+        }
+    except Exception as exc:
+        return {
+            "success": False,
+            "skipped": False,
+            "error": str(exc),
+            "deleted_rows": [],
+            "spreadsheet_id": spreadsheet_id,
+            "sheet_gid": sheet_gid,
+        }
+
+
 def parse_confirmation_rows(csv_text, column_map):
     reader = csv.DictReader(csv_text.splitlines())
     rows = []
@@ -517,6 +666,27 @@ def find_latest_requested_metric_field(rows, database, tbl):
     return normalize_requested_metric_field(latest_row.get("metric_field"))
 
 
+def find_latest_confirmation_row(rows, database, tbl, country=""):
+    database = (database or "").strip()
+    tbl = (tbl or "").strip()
+    country = (country or "").strip().lower()
+    latest_row = None
+    for row in rows:
+        row_database = (row.get("database") or "").strip()
+        row_tbl = (row.get("tbl") or row.get("dest_tbl") or "").strip()
+        row_country = str(
+            row.get("country") or QUALITY_RULE_FORM_CONFIG.get("country", "ph")
+        ).strip().lower()
+        if row_database != database or row_tbl != tbl:
+            continue
+        if country and row_country != country:
+            continue
+        submitted_at = (row.get("submitted_at") or "").strip()
+        if latest_row is None or submitted_at >= (latest_row.get("submitted_at") or ""):
+            latest_row = row
+    return latest_row
+
+
 def update_backlog_with_decisions(backlog, decision_rows):
     items = backlog.setdefault("items", {})
     latest = latest_decisions_by_candidate(decision_rows)
@@ -594,7 +764,9 @@ def remove_backlog_items(backlog, candidate_keys):
     return backlog
 
 
-def format_tv_apply_summary(applied_items, disabled_items, failed_items):
+def format_tv_apply_summary(applied_items, disabled_items, failed_items, processed_sheet_rows=None, sheet_delete_result=None):
+    processed_sheet_rows = list(processed_sheet_rows or [])
+    sheet_delete_result = sheet_delete_result or {}
     lines = ["📋 数据质量规则处理结果", ""]
     if applied_items:
         lines.append("✅ 已补充规则:")
@@ -611,6 +783,12 @@ def format_tv_apply_summary(applied_items, disabled_items, failed_items):
         for item in failed_items:
             lines.append(f"• {item['country']} / {item['database']} / {item['dest_tbl']}")
             lines.append(f"  原因: {item.get('reason', '未知原因')}")
+        lines.append("")
+    if processed_sheet_rows and not sheet_delete_result.get("success"):
+        lines.append("🗑️ 请手动删除确认表中的已处理记录:")
+        lines.append(f"• 行号: {', '.join(str(row) for row in processed_sheet_rows)}")
+        if sheet_delete_result.get("reason"):
+            lines.append(f"• 未自动删除原因: {sheet_delete_result['reason']}")
         lines.append("")
     lines.append("请自行查看并按需调整。")
     return "\n".join(lines)
