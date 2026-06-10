@@ -23,6 +23,7 @@ from core.quality_rule_confirmation import (
     load_backlog,
     merge_candidates_into_backlog,
     parse_confirmation_rows,
+    result_to_backlog_item,
     save_backlog,
     submit_backlog_items_to_form,
 )
@@ -136,9 +137,12 @@ def main():
         table_name,
         country=target_country,
     )
+    existing_confirmation_row_has_sql = bool(
+        existing_confirmation_row and confirmation_row_has_submittable_sql(existing_confirmation_row)
+    )
     requested_metric_field = load_requested_metric_field(confirmation_rows, database, table_name)
 
-    if existing_confirmation_row and confirmation_row_has_submittable_sql(existing_confirmation_row):
+    if existing_confirmation_row_has_sql:
         result = {
             "country": QUALITY_RULE_FORM_CONFIG.get("country", "ph"),
             "database": database,
@@ -222,7 +226,25 @@ def main():
         if result.get("candidate"):
             result["candidate"]["requested_metric_field"] = requested_metric_field
     if result.get("status") in {"existing", "skipped"}:
-        emit(build_non_backlog_payload(database, table_name, result), load_langfuse_batch())
+        payload = build_non_backlog_payload(database, table_name, result)
+        if result.get("status") == "existing" and existing_confirmation_row and not existing_confirmation_row_has_sql:
+            backfill_item = result_to_backlog_item(result, detected_at=detected_at)
+            backfill_item["form_submitted_at"] = None
+            backfill_item["last_form_payload_signature"] = ""
+            if backlog_item_has_submittable_sql(backfill_item):
+                form_result = submit_backlog_items_to_form([backfill_item], dry_run=False)
+                success_keys = {
+                    row["candidate_key"]
+                    for row in form_result.get("results", [])
+                    if row.get("ok")
+                }
+                if backfill_item["candidate_key"] in success_keys:
+                    backfill_item["form_submitted_at"] = detected_at
+                    backfill_item["last_form_payload_signature"] = compute_form_payload_signature(backfill_item)
+                payload["form_submission_items"] = 1
+                payload["form_result"] = form_result
+                payload["backlog_item"] = backfill_item
+        emit(payload, load_langfuse_batch())
         return 0
 
     backlog = load_backlog()

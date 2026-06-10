@@ -968,6 +968,14 @@ def build_count_rule_candidate(
             "rule_name": COUNT_RULE_NAME,
             "dest_tbl": target_table,
             "dest_db": existing_rule.get("dest_db") or table.get("dest_db") or table.get("db"),
+            "src_db": existing_rule.get("src_db", ""),
+            "src_tbl": existing_rule.get("src_tbl", ""),
+            "check_field": existing_rule.get("check_field") or "",
+            "requested_metric_field": normalize_requested_metric_field(
+                requested_metric_field or existing_rule.get("requested_metric_field")
+            ),
+            "src_sql": existing_rule.get("src_sql", ""),
+            "dest_sql": existing_rule.get("dest_sql", ""),
             "reason": "已存在 cnt 规则",
             "rule": existing_rule,
         }
@@ -1551,6 +1559,14 @@ def build_exists_rule_candidate(database_name, table, rule_map, git_roots=None, 
             "rule_name": EXISTS_RULE_NAME,
             "dest_tbl": target_table,
             "dest_db": existing_rule.get("dest_db") or table.get("db"),
+            "src_db": existing_rule.get("src_db", ""),
+            "src_tbl": existing_rule.get("src_tbl", ""),
+            "check_field": existing_rule.get("check_field") or "",
+            "requested_metric_field": normalize_requested_metric_field(
+                requested_metric_field or existing_rule.get("requested_metric_field")
+            ),
+            "src_sql": existing_rule.get("src_sql", ""),
+            "dest_sql": existing_rule.get("dest_sql", ""),
             "reason": "已存在 if_exists 规则",
             "rule": existing_rule,
         }

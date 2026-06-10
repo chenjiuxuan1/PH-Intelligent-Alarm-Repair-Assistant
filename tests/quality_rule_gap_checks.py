@@ -94,7 +94,16 @@ class QualityRuleGapScannerTests(unittest.TestCase):
         table = {"db": "dwd", "tbl": "dwd_user_log"}
         rule_map = {
             "dwd_user_log": {
-                "cnt": {"name": "cnt", "dest_db": "dwd", "dest_tbl": "dwd_user_log"}
+                "cnt": {
+                    "name": "cnt",
+                    "dest_db": "dwd",
+                    "dest_tbl": "dwd_user_log",
+                    "src_db": "ods",
+                    "src_tbl": "ods_user_log",
+                    "check_field": "created_at",
+                    "src_sql": "select 1",
+                    "dest_sql": "select 2",
+                }
             }
         }
 
@@ -102,6 +111,11 @@ class QualityRuleGapScannerTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "existing")
         self.assertEqual(result["rule_name"], "cnt")
+        self.assertEqual(result["src_db"], "ods")
+        self.assertEqual(result["src_tbl"], "ods_user_log")
+        self.assertEqual(result["check_field"], "created_at")
+        self.assertEqual(result["src_sql"], "select 1")
+        self.assertEqual(result["dest_sql"], "select 2")
 
     def test_build_count_rule_candidate_generates_candidate_for_etl_table(self):
         module = load_module()
