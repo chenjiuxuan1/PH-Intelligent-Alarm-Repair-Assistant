@@ -30,6 +30,7 @@ from core.quality_rule_gap_scanner import (
     EXISTS_RULE_DATABASES,
     build_exists_rule_candidate,
     build_count_rule_candidate,
+    default_git_scan_roots,
     load_ods_table_by_dest,
     load_quality_rules,
 )
@@ -125,7 +126,7 @@ def main():
     database = args.database
     table_name = args.tbl
     detected_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    git_roots = args.git_roots or ["/data/git/starrocks/workflow/ph"]
+    git_roots = args.git_roots or default_git_scan_roots()
     confirmation_rows = load_confirmation_rows()
     target_country = str(QUALITY_RULE_FORM_CONFIG.get("country", "ph")).strip().lower()
     existing_confirmation_row = find_latest_confirmation_row(
