@@ -613,6 +613,11 @@ def need_apply_is_enabled(value):
     return normalized in {"1", "yes", "y", "true", "apply", "补充", "确认补充"}
 
 
+def auto_generate_is_enabled(value):
+    normalized = (value or "").strip().lower()
+    return normalized in {"1", "yes", "y", "true", "generate", "自动生成", "需要自动生成"}
+
+
 def human_check_is_enabled(value):
     normalized = (value or "").strip().lower()
     return normalized in {"1", "yes", "y", "true", "pass", "通过", "确认"}
@@ -685,6 +690,22 @@ def find_latest_confirmation_row(rows, database, tbl, country=""):
         if latest_row is None or submitted_at >= (latest_row.get("submitted_at") or ""):
             latest_row = row
     return latest_row
+
+
+def confirmation_row_has_submittable_sql(row):
+    if not row:
+        return False
+    database = (row.get("database") or "").strip()
+    rule_name = (row.get("rule_name") or "").strip().lower()
+    if not rule_name and database:
+        rule_name = resolve_rule_name(database)
+    src_sql = (row.get("src_sql") or "").strip()
+    dest_sql = (row.get("dest_sql") or "").strip()
+    if rule_name == "if_exists":
+        return bool(dest_sql)
+    if rule_name == "cnt":
+        return bool(src_sql and dest_sql)
+    return bool(src_sql or dest_sql)
 
 
 def update_backlog_with_decisions(backlog, decision_rows):

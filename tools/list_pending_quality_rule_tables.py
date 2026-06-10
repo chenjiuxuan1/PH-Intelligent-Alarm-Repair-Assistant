@@ -10,6 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from config.config import QUALITY_RULE_FORM_CONFIG
 from core.quality_rule_confirmation import (
+    auto_generate_is_enabled,
+    confirmation_row_has_submittable_sql,
     fetch_confirmation_csv,
     find_latest_confirmation_row,
     parse_confirmation_rows,
@@ -66,15 +68,56 @@ def filter_existing_confirmation_rows(items, confirmation_rows):
     target_country = str(QUALITY_RULE_FORM_CONFIG.get("country", "ph")).strip().lower()
     filtered = []
     for item in items:
-        if find_latest_confirmation_row(
+        latest_row = find_latest_confirmation_row(
             confirmation_rows,
             item.get("database", ""),
             item.get("tbl", ""),
             country=target_country,
-        ):
+        )
+        if latest_row and confirmation_row_has_submittable_sql(latest_row):
             continue
         filtered.append(item)
     return filtered
+
+
+def extract_manual_pending_rows(confirmation_rows, target_country):
+    manual_items = []
+    for row in confirmation_rows:
+        row_country = str(
+            row.get("country") or QUALITY_RULE_FORM_CONFIG.get("country", "ph")
+        ).strip().lower()
+        if target_country and row_country != target_country:
+            continue
+        if not auto_generate_is_enabled(row.get("auto_generate")):
+            continue
+        database = (row.get("database") or "").strip()
+        tbl = (row.get("tbl") or row.get("dest_tbl") or "").strip()
+        if not database or not tbl:
+            continue
+        if confirmation_row_has_submittable_sql(row):
+            continue
+        manual_items.append(
+            {
+                "database": database,
+                "tbl": tbl,
+                "status": "pending_generation",
+                "reason": "Google 确认表手动录入，待自动生成",
+                "source": "confirmation_sheet",
+            }
+        )
+    return manual_items
+
+
+def merge_pending_items(scanned_items, manual_items):
+    merged = []
+    seen = set()
+    for item in list(scanned_items or []) + list(manual_items or []):
+        key = ((item.get("database") or "").strip(), (item.get("tbl") or "").strip())
+        if not all(key) or key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    return merged
 
 
 def main():
@@ -117,7 +160,13 @@ def main():
                 }
             )
 
-    items = filter_existing_confirmation_rows(items, load_confirmation_rows())
+    confirmation_rows = load_confirmation_rows()
+    target_country = str(QUALITY_RULE_FORM_CONFIG.get("country", "ph")).strip().lower()
+    items = filter_existing_confirmation_rows(items, confirmation_rows)
+    items = merge_pending_items(
+        items,
+        extract_manual_pending_rows(confirmation_rows, target_country),
+    )
 
     if args.json:
         print(json.dumps(items, ensure_ascii=False, indent=2))

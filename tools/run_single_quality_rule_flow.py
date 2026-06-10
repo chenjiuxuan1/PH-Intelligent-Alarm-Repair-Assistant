@@ -15,6 +15,7 @@ from config.config import QUALITY_RULE_FORM_CONFIG
 from core.quality_rule_confirmation import (
     backlog_item_has_submittable_sql,
     build_candidate_key,
+    confirmation_row_has_submittable_sql,
     compute_form_payload_signature,
     fetch_confirmation_csv,
     find_latest_confirmation_row,
@@ -137,7 +138,7 @@ def main():
     )
     requested_metric_field = load_requested_metric_field(confirmation_rows, database, table_name)
 
-    if existing_confirmation_row:
+    if existing_confirmation_row and confirmation_row_has_submittable_sql(existing_confirmation_row):
         result = {
             "country": QUALITY_RULE_FORM_CONFIG.get("country", "ph"),
             "database": database,

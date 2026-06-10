@@ -283,6 +283,7 @@ QUALITY_RULE_FORM_CONFIG = {
                     "country": "国家",
                     "database": "数据库",
                     "tbl": "表名",
+                    "auto_generate": "是否需要自动生成",
                     "need_apply": "是否上线",
                     "metric_field": "需要校验的内容字段",
                     "candidate_key": "唯一键",
