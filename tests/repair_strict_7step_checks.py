@@ -1078,6 +1078,19 @@ class RepairStrict7StepTests(unittest.TestCase):
             self.assertFalse(module.should_delay_failed_state_confirmation(item, "STOP"))
         self.assertEqual(item["failed_state_rechecks"], 0)
 
+    def test_should_delay_failed_state_confirmation_allows_more_than_two_rechecks_within_grace_window(self):
+        module = load_module()
+        item = {
+            "workflow_code": "18641948384363",
+            "first_seen_at": 100.0,
+            "failed_state_rechecks": 2,
+            "task": {"workflow_code": "18641948384363"},
+        }
+
+        with mock.patch("time.time", return_value=120.0):
+            self.assertTrue(module.should_delay_failed_state_confirmation(item, "STOP"))
+        self.assertEqual(item["failed_state_rechecks"], 3)
+
     def test_get_instance_from_list_avoids_all_state_for_process_mode(self):
         module = load_module()
         module.DS_API_MODE = "process_v2"
@@ -1723,6 +1736,38 @@ class RepairStrict7StepTests(unittest.TestCase):
 
         self.assertEqual(result["task_code"], "task-runnable")
         self.assertEqual(result["task_flag"], "YES")
+
+    def test_step2_search_in_workflow_prefers_executable_task_over_conditions_node(self):
+        module = load_module()
+
+        def fake_ds_api_get(endpoint):
+            if endpoint == "/projects/default-project/workflow-definition/wf-1":
+                return False, {}, "not json"
+            if endpoint == "/projects/default-project/process-definition/wf-1":
+                return True, {
+                    "processDefinition": {"name": "DWD_PAIMON"},
+                    "taskDefinitionList": [
+                        {
+                            "code": "task-conditions",
+                            "name": "dwd_user_activity_log",
+                            "flag": "YES",
+                            "taskType": "CONDITIONS",
+                        },
+                        {
+                            "code": "task-sql",
+                            "name": "dwd_user_activity_log",
+                            "flag": "YES",
+                            "taskType": "SHELL",
+                        },
+                    ],
+                }, ""
+            raise AssertionError(endpoint)
+
+        with mock.patch.object(module, "ds_api_get", side_effect=fake_ds_api_get):
+            result = module.step2_search_in_workflow("wf-1", "dwd_user_activity_log")
+
+        self.assertEqual(result["task_code"], "task-sql")
+        self.assertEqual(result["task_type"], "SHELL")
 
     def test_apply_repair_strategy_escalates_forbidden_task_to_manual_review(self):
         module = load_module()

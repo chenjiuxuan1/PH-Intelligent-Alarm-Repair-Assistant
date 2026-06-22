@@ -58,6 +58,7 @@ DS_STATUS_DEBUG = os.environ.get('REPAIR_DEBUG_DS_STATUS', '').strip().lower() i
 REPAIR_WORKFLOW_CONFLICT_POLL_INTERVAL_SECONDS = int(os.environ.get('REPAIR_WORKFLOW_CONFLICT_POLL_INTERVAL_SECONDS', '30'))
 REPAIR_WORKFLOW_CONFLICT_WAIT_SECONDS = int(os.environ.get('REPAIR_WORKFLOW_CONFLICT_WAIT_SECONDS', '1800'))
 FAILED_STATE_CONFIRMATION_GRACE_SECONDS = int(os.environ.get('FAILED_STATE_CONFIRMATION_GRACE_SECONDS', '45'))
+FAILED_STATE_CONFIRMATION_MAX_RECHECKS = int(os.environ.get('FAILED_STATE_CONFIRMATION_MAX_RECHECKS', '5'))
 
 # 维护任务关键词（排除）
 MAINTENANCE_KEYWORDS = ['补充', '删除', '清理', '修复', '历史', '冗余', '临时', 'test', 'copy', '手插入']
@@ -725,7 +726,7 @@ def should_delay_failed_state_confirmation(item, state):
         return False
 
     rechecks = int(item.get('failed_state_rechecks', 0))
-    if rechecks >= 2:
+    if rechecks >= FAILED_STATE_CONFIRMATION_MAX_RECHECKS:
         return False
 
     item['failed_state_rechecks'] = rechecks + 1
@@ -1396,6 +1397,19 @@ def is_subprocess_task(task_type):
     return normalized in {'SUB_PROCESS', 'SUB_PROCESS_NODE', 'SUBPROCESS'}
 
 
+def is_directly_runnable_task_type(task_type):
+    """过滤掉会导致 TASK_ONLY 空跑的控制流节点。"""
+    normalized = str(task_type or '').strip().upper()
+    return normalized not in {
+        'CONDITIONS',
+        'CONDITION',
+        'SWITCH',
+        'DEPENDENT',
+        'DEPENDENCE',
+        'DEPENDENCE_TASK',
+    }
+
+
 def should_block_scheduled_workflow_match(location):
     """仅当命中的是父工作流里的子流程节点时，才禁止直接启动。"""
     if not location:
@@ -1466,6 +1480,18 @@ def step2_search_in_workflow(workflow_code, table_name, visited=None):
             if str(candidate.get('task_flag', 'YES')).upper() != 'NO'
         ]
         if runnable_child_candidates:
+            directly_runnable_child_candidates = [
+                candidate for candidate in runnable_child_candidates
+                if is_directly_runnable_task_type(candidate.get('task_type'))
+            ]
+            if directly_runnable_child_candidates:
+                non_datax_directly_runnable_child_candidates = [
+                    candidate for candidate in directly_runnable_child_candidates
+                    if candidate.get('task_type') != 'DATAX'
+                ]
+                if non_datax_directly_runnable_child_candidates:
+                    return non_datax_directly_runnable_child_candidates[0]
+                return directly_runnable_child_candidates[0]
             non_datax_runnable_child_candidates = [
                 candidate for candidate in runnable_child_candidates
                 if candidate.get('task_type') != 'DATAX'
@@ -1489,6 +1515,18 @@ def step2_search_in_workflow(workflow_code, table_name, visited=None):
         if str(candidate.get('task_flag', 'YES')).upper() != 'NO'
     ]
     if runnable_candidates:
+        directly_runnable_candidates = [
+            candidate for candidate in runnable_candidates
+            if is_directly_runnable_task_type(candidate.get('task_type'))
+        ]
+        if directly_runnable_candidates:
+            non_datax_directly_runnable_candidates = [
+                candidate for candidate in directly_runnable_candidates
+                if candidate.get('task_type') != 'DATAX'
+            ]
+            if non_datax_directly_runnable_candidates:
+                return non_datax_directly_runnable_candidates[0]
+            return directly_runnable_candidates[0]
         non_datax_runnable_candidates = [
             candidate for candidate in runnable_candidates
             if candidate.get('task_type') != 'DATAX'
